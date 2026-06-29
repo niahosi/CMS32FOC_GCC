@@ -1,0 +1,13 @@
+build/
+.cache/
+.claude/
+*.jdebug.user
+*.o
+*.obj
+*.elf
+*.map
+*.hex
+*.bin
+*.lst
+*.d
+*.su

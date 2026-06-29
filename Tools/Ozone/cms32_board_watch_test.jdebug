@@ -1,0 +1,54 @@
+/*********************************************************************
+*                 (c) SEGGER Microcontroller GmbH                    *
+*                      The Embedded Experts                          *
+*                         www.segger.com                             *
+**********************************************************************
+
+File          : cms32_board_watch_test.jdebug
+Ozone Version : V3.40j compatible
+*/
+
+/*********************************************************************
+*
+*       OnProjectLoad
+*
+**********************************************************************
+*/
+void OnProjectLoad(void) {
+  //
+  // CMS32M6510 is not known by this Ozone install, so debug it as the
+  // generic Cortex-M0+ core and load symbols from the WSL-built ELF.
+  //
+  Project.AddPathSubstitute("/home/jove/workspace/01-Projects/Embedded/CMS32FOC_GCC",
+                            "//wsl.localhost/Ubuntu/home/jove/workspace/01-Projects/Embedded/CMS32FOC_GCC");
+  Project.AddPathSubstitute("C:/Users/EDY/Desktop", "$(ProjectDir)");
+  Project.AddPathSubstitute("c:/users/edy/desktop", "$(ProjectDir)");
+
+  Project.SetDevice("Cortex-M0+");
+  Project.SetHostIF("USB", "600107328");
+  Project.SetTargetIF("SWD");
+  Project.SetTIFSpeed("4 MHz");
+  Project.AddSvdFile("$(InstallDir)/Config/CPU/Cortex-M0.svd");
+
+  File.Open("//wsl.localhost/Ubuntu/home/jove/workspace/01-Projects/Embedded/CMS32FOC_GCC/build/gcc-debug/cms32_board_watch_test");
+}
+
+/*********************************************************************
+*
+*       AfterTargetReset
+*
+**********************************************************************
+*/
+void AfterTargetReset(void) {
+  _SetupTarget();
+}
+
+/*********************************************************************
+*
+*       AfterTargetDownload
+*
+**********************************************************************
+*/
+void AfterTargetDownload(void) {
+  _SetupTarget();
+}

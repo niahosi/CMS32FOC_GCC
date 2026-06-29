@@ -1,0 +1,83 @@
+{
+  "material-icon-theme.folders.associations": {
+    "Firmware": "development",
+    "App": "app",
+    "Board": "components",
+    "Drivers": "server",
+    "MotorControl": "controller",
+    "ThirdParty": "node",
+    "Cmsemicon": "plugin",
+    "CMS32M6510": "target",
+    "CMS32M65xx": "target",
+    "Tests": "test",
+    "BoardWatch": "mock",
+    "StartupSmoke": "mock",
+    "CppSmoke": "mock",
+    "Config": "config",
+    "Inc": "include",
+    "Src": "src",
+    "Memory": "dump",
+    "Docs": "docs",
+    "Architecture": "core",
+    "Hardware": "linux",
+    "Tools": "tools",
+    "JLink": "tools",
+    "Ozone": "tools",
+    "cmake": "ci"
+  },
+  "cmake.useCMakePresets": "always",
+  "cmake.configureOnOpen": false,
+  "cmake.buildDirectory": "${workspaceFolder}/build/gcc-debug",
+  "cmake.showOptionsMovedNotification": false,
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "clangd.path": "/usr/bin/clangd",
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}/build/gcc-debug",
+    "--query-driver=/usr/bin/arm-none-eabi-gcc,/usr/bin/arm-none-eabi-g++",
+    "--background-index",
+    "--clang-tidy",
+    "--completion-style=detailed",
+    "--header-insertion=never",
+    "--function-arg-placeholders=false"
+  ],
+  "clangd.semanticHighlighting": true,
+  "editor.semanticHighlighting.enabled": true,
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": true,
+  "editor.guides.indentation": true,
+  "editor.guides.highlightActiveIndentation": true,
+  "editor.rulers": [
+    100
+  ],
+  "editor.renderWhitespace": "boundary",
+  "editor.stickyScroll.enabled": true,
+  "editor.minimap.enabled": false,
+  "editor.inlayHints.enabled": "on",
+  "editor.inlayHints.padding": true,
+  "breadcrumbs.enabled": true,
+  "[c]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "[h]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "[hpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "editor.formatOnSave": false,
+  "files.exclude": {
+    "**/.cache": true,
+    "**/.claude": true,
+    "build/**/.cmake": true,
+    "build/**/*.map": true
+  },
+  "search.exclude": {
+    "build": true,
+    "Firmware/ThirdParty": true,
+    "Reference": true
+  },
+  "remote.autoForwardPorts": false
+}

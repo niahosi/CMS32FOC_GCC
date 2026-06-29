@@ -1,0 +1,109 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CMake: Configure",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--preset",
+        "gcc-debug"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CLICOLOR_FORCE": "1",
+          "GCC_COLORS": "error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01"
+        }
+      },
+      "problemMatcher": [],
+      "hide": true
+    },
+    {
+      "label": "Build",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "--preset",
+        "gcc-debug",
+        "--target",
+        "cms32foc"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CLICOLOR_FORCE": "1",
+          "GCC_COLORS": "error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01"
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "dependsOn": [
+        "CMake: Configure"
+      ],
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "Clean",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "--preset",
+        "gcc-debug",
+        "--target",
+        "clean"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CLICOLOR_FORCE": "1",
+          "GCC_COLORS": "error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Rebuild",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Clean",
+        "Build"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Flash",
+      "type": "shell",
+      "command": "target='${input:firmwareTarget}'; hex=\"\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\jove\\\\workspace\\\\01-Projects\\\\Embedded\\\\CMS32FOC_GCC\\\\build\\\\gcc-debug\\\\${target}.hex\"; printf 'device CMS32M6510\\nif SWD\\nspeed 4000\\nconnect\\nr\\nerase\\nloadfile %s\\nr\\ng\\nqc\\n' \"$hex\" | '/mnt/c/Program Files/SEGGER/JLink_V952/JLink.exe'",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CLICOLOR_FORCE": "1",
+          "GCC_COLORS": "error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01"
+        }
+      },
+      "dependsOn": [
+        "Build"
+      ],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "firmwareTarget",
+      "type": "pickString",
+      "description": "Select firmware to flash",
+      "options": [
+        "cms32foc",
+        "cms32_board_watch_test",
+        "cms32_cpp_smoke_test",
+        "cms32_startup_smoke_test"
+      ],
+      "default": "cms32foc"
+    }
+  ]
+}

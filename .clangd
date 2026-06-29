@@ -1,0 +1,15 @@
+Diagnostics:
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - performance-*
+      - readability-braces-around-statements
+      - readability-const-return-type
+    Remove:
+      - bugprone-easily-swappable-parameters
+      - readability-magic-numbers
+---
+If:
+  PathMatch: Firmware/ThirdParty/.*
+Diagnostics:
+  Suppress: "*"
