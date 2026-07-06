@@ -9,27 +9,42 @@ volatile MotorControlCommand_t g_motor_cmd = {
     .id_ref = 0,
     .iq_ref = 0,
     .speed_ref = 0,
-    .iq_limit = MOTOR_SPEED_IQ_LIMIT_DEFAULT,
-    .current_kp = MOTOR_CURRENT_KP,
-    .current_ki = MOTOR_CURRENT_KI,
-    .current_v_limit = MOTOR_CURRENT_V_LIMIT,
-    .open_loop_speed_ref = MOTOR_OL_SPEED_REF_DEFAULT,
-    .vf_voltage = MOTOR_VF_VOLTAGE_DEFAULT,
-    .if_id_ref = MOTOR_IF_ID_REF_DEFAULT,
-    .if_iq_ref = MOTOR_IF_IQ_REF_DEFAULT,
-    .open_loop_timeout_ms = MOTOR_OL_TIMEOUT_MS_DEFAULT,
+    .speed_ref_rpm = 0,
+    .iq_limit = CTRL_SPD_IQ_LIMIT,
+    .current_kp = CTRL_CUR_KP,
+    .current_ki = CTRL_CUR_KI,
+    .speed_kp = CTRL_SPD_KP,
+    .speed_ki = CTRL_SPD_KI,
+    .current_v_limit = CTRL_CUR_V_LIMIT,
+    .open_loop_speed_ref = OL_SPEED_REF,
+    .vf_voltage = OL_VF_VOLTAGE,
+    .if_id_ref = OL_IF_ID_REF,
+    .if_iq_ref = OL_IF_IQ_REF,
+    .open_loop_timeout_ms = OL_TIMEOUT_MS,
     .elec_zero_trim = 0,
+    .voltage_theta_offset = 0,
 };
 
 volatile MotorControlWatch_t g_motor_watch;
+volatile uint32_t g_app_boot_stage;
+volatile uint32_t g_app_loop_count;
+volatile uint32_t g_app_adc_irq_count;
+volatile uint32_t g_app_adc_ready_count;
 
 int main(void)
 {
+    g_app_boot_stage = 1U;
     bsp_init();
+    g_app_boot_stage = 2U;
     MotorControl_Init();
+    g_app_boot_stage = 3U;
+    MotorControl_UpdateWatch(&g_motor_watch);
+    bsp_start_adc_sync();
+    g_app_boot_stage = 4U;
 
     while (1)
     {
+        g_app_loop_count++;
         MotorControl_ApplyCommand(&g_motor_cmd);
         MotorControl_RunSlowLoop();
         MotorControl_UpdateWatch(&g_motor_watch);
@@ -38,5 +53,9 @@ int main(void)
 
 void ADC_IRQHandler(void)
 {
-    (void)MotorControl_FastLoopFromAdcIrq();
+    g_app_adc_irq_count++;
+    if (MotorControl_FastLoopFromAdcIrq() != 0U)
+    {
+        g_app_adc_ready_count++;
+    }
 }

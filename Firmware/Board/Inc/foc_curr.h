@@ -29,6 +29,9 @@ void curr_sync_init(void);
 /** @brief PWM duty 更新后刷新下一拍采样窗口和触发点。 */
 void curr_sync_timing(void);
 
+/** @brief 传入当前 VF 电压命令，仅用于高电压单点采样实验。 */
+void curr_set_vf_voltage(int16_t vf_voltage);
+
 /** @brief ADC 中断采样入口。 */
 uint8_t curr_irq(void);
 
@@ -62,11 +65,20 @@ uint16_t curr_center_tick(void);
 uint16_t curr_window_u(void);
 uint16_t curr_window_v(void);
 uint16_t curr_window_w(void);
-uint8_t curr_three_shunt_active(void);
 uint16_t curr_window_common(void);
 uint32_t curr_sample_switch_count(void);
-uint32_t curr_sample_fallback_count(void);
-uint16_t curr_sample_pair_hold_left(void);
+int16_t curr_sample_center_bias(void);
+uint16_t curr_sample_tick_a(void);
+uint16_t curr_sample_tick_b(void);
+uint8_t curr_sample_single_point(void);
+uint8_t curr_sample_region(void);
+uint8_t curr_sample_recon_mode(void);
+uint8_t curr_sample_valid_mask(void);
+uint8_t curr_sample_bad_count(void);
+uint8_t curr_sample_fault(void);
+uint16_t curr_sample_t1(void);
+uint16_t curr_sample_t2(void);
+uint16_t curr_sample_t3(void);
 uint32_t curr_iv_spike_count(void);
 uint32_t curr_iw_spike_count(void);
 uint16_t curr_iv_max_step(void);

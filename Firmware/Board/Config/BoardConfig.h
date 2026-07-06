@@ -1,0 +1,71 @@
+/**
+ * @file BoardConfig.h
+ * @brief 板级和电机硬件基线配置。
+ * @details 这里放不常变的 PWM 频率/周期、ADC/PGA 换算、电机和传感器基础参数。
+ */
+
+#pragma once
+
+/* Board PWM --------------------------------------------------------------- */
+
+/** @brief PWM 目标频率，单位 Hz。 */
+#define PWM_FREQ_HZ 20000U
+/** @brief 中心对齐 PWM 周期，Period = 64000000 / (2 * 20000) = 1600。 */
+#define PWM_PERIOD 1600U
+/** @brief 50% 占空比计数。 */
+#define PWM_DUTY_50 800U
+/** @brief 高调制测试阶段最小占空比限制，先保留约一个死区 tick 的极窄脉冲余量。 */
+#define PWM_DUTY_MIN 32U
+/** @brief 高调制测试阶段最大占空比限制。 */
+#define PWM_DUTY_MAX 1568U
+/** @brief 当前对称 duty guard 下 SVPWM 线性电压幅值上限，约等于 (800 - guard) / 0.866。 */
+#define PWM_SVPWM_V_LIMIT (((PWM_DUTY_50 - PWM_DUTY_MIN) * 1000U) / 866U)
+/** @brief EPWM CMP0 触发 ADC 的默认计数点。 */
+#define PWM_ADC_TRIGGER_TICK_DEFAULT 650U
+/** @brief 死区时间 tick 数，当前约 0.5 us。 */
+#define PWM_DEADTIME_TICKS 32U
+
+/* Phase mapping ----------------------------------------------------------- */
+
+#define MOT_PHASE_MAP_UVW 0U
+#define MOT_PHASE_MAP_UWV 1U
+#define MOT_PHASE_MAP_VUW 2U
+#define MOT_PHASE_MAP_VWU 3U
+#define MOT_PHASE_MAP_WUV 4U
+#define MOT_PHASE_MAP_WVU 5U
+
+/** @brief 控制算法 U/V/W 到 EPWM 物理 U/V/W 的相序映射。 */
+#define MOT_PWM_PHASE_MAP MOT_PHASE_MAP_UVW
+/** @brief 物理采样 U/V/W 到控制算法 U/V/W 的相序映射。 */
+#define MOT_CURR_PHASE_MAP MOT_PHASE_MAP_UVW
+/** @brief 电流采样符号，1 保持，-1 整体反向。 */
+#define MOT_CURR_SIGN (-1)
+
+/* Board analog ------------------------------------------------------------ */
+
+/** @brief ADC 参考电压，单位 V。 */
+#define ADC_VREF_V 3.6f
+/** @brief ADC 满量程计数。 */
+#define ADC_COUNTS 4096.0f
+/** @brief 采样电阻阻值，单位 ohm。 */
+#define SHUNT_OHM 0.08f
+/** @brief PGA 增益。 */
+#define PGA_GAIN 2.0f
+/** @brief ADC count 到电流 A 的理论换算系数。 */
+#define ADC_TO_AMP (ADC_VREF_V / ADC_COUNTS / SHUNT_OHM / PGA_GAIN)
+/** @brief 静态零漂校准默认采样次数。 */
+#define BOARD_CURRENT_OFFSET_SAMPLES 1024U
+
+/* Motor and sensor -------------------------------------------------------- */
+
+#define MOT_POLE_PAIRS 4u
+#define MOT_SENSOR_POLE_PAIRS 4u
+#define MOT_SENSOR_CPR 65536ul
+#define MOT_POS_COUNTS_PER_REV (MOT_SENSOR_CPR * MOT_SENSOR_POLE_PAIRS)
+
+/** @brief MA600 磁环角到电机电角度的倍数：转子极对数 / 磁环极对数。 */
+#define MOT_SENSOR_ELEC (MOT_POLE_PAIRS / MOT_SENSOR_POLE_PAIRS)
+/** @brief 传感器方向，使编码器电角度与控制电角度正方向一致。 */
+#define MOT_SENSOR_DIR (1)
+/** @brief 电角度零点偏移。 */
+#define MOT_ELEC_ZERO  -13478//-24000//9577u //0u //38778u

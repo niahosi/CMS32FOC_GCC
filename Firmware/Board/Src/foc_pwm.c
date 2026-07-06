@@ -42,6 +42,7 @@ static PwmState s_pwm = {
 
 static void driver_en(uint8_t en);
 static uint16_t clamp_duty(uint16_t duty);
+static void map_pwm_duty(uint16_t u_in, uint16_t v_in, uint16_t w_in, PwmDuty* out);
 static void pins_init(void);
 static void adc_trigger_apply(void);
 static void adc_trigger_update(void);
@@ -95,14 +96,41 @@ void pwm_init(void)
 void pwm_set_duty(uint16_t duty_u, uint16_t duty_v, uint16_t duty_w)
 {
     /* 只写主通道比较值；互补通道由 EPWM 根据死区配置自动生成。 */
-    s_pwm.duty.u = clamp_duty(duty_u);
-    s_pwm.duty.v = clamp_duty(duty_v);
-    s_pwm.duty.w = clamp_duty(duty_w);
+    map_pwm_duty(duty_u, duty_v, duty_w, &s_pwm.duty);
 
     EPWM_ConfigChannelSymDuty(EPWM0, s_pwm.duty.u);
     EPWM_ConfigChannelSymDuty(EPWM2, s_pwm.duty.v);
     EPWM_ConfigChannelSymDuty(EPWM4, s_pwm.duty.w);
     curr_sync_timing();
+}
+
+static void map_pwm_duty(uint16_t u_in, uint16_t v_in, uint16_t w_in, PwmDuty* out)
+{
+#if (MOT_PWM_PHASE_MAP == MOT_PHASE_MAP_UWV)
+    out->u = clamp_duty(u_in);
+    out->v = clamp_duty(w_in);
+    out->w = clamp_duty(v_in);
+#elif (MOT_PWM_PHASE_MAP == MOT_PHASE_MAP_VUW)
+    out->u = clamp_duty(v_in);
+    out->v = clamp_duty(u_in);
+    out->w = clamp_duty(w_in);
+#elif (MOT_PWM_PHASE_MAP == MOT_PHASE_MAP_VWU)
+    out->u = clamp_duty(v_in);
+    out->v = clamp_duty(w_in);
+    out->w = clamp_duty(u_in);
+#elif (MOT_PWM_PHASE_MAP == MOT_PHASE_MAP_WUV)
+    out->u = clamp_duty(w_in);
+    out->v = clamp_duty(u_in);
+    out->w = clamp_duty(v_in);
+#elif (MOT_PWM_PHASE_MAP == MOT_PHASE_MAP_WVU)
+    out->u = clamp_duty(w_in);
+    out->v = clamp_duty(v_in);
+    out->w = clamp_duty(u_in);
+#else
+    out->u = clamp_duty(u_in);
+    out->v = clamp_duty(v_in);
+    out->w = clamp_duty(w_in);
+#endif
 }
 
 void pwm_set_adc_trigger(uint16_t tick)
@@ -264,14 +292,12 @@ static void pins_init(void)
 
 static void adc_trigger_apply(void)
 {
-#if (CURRENT_SAMPLE_MULTI_ENABLE != 0U)
-    /* 双点诊断模式：两个比较点都沿用 EPWM0 下降计数段。 */
+#if (CS_MULTI_EN != 0U)
     EPWM_ConfigCompareTriger(EPWM_CMPTG_0, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0,
                              s_pwm.trig_a);
     EPWM_ConfigCompareTriger(EPWM_CMPTG_1, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0,
                              s_pwm.trig_b);
 #else
-    /* 单点模式保持当前行为。 */
     EPWM_ConfigCompareTriger(EPWM_CMPTG_0, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0,
                              s_pwm.trig);
 #endif
@@ -279,20 +305,20 @@ static void adc_trigger_apply(void)
 
 static void adc_trigger_update(void)
 {
-#if (CURRENT_SAMPLE_MULTI_ENABLE != 0U)
+#if (CS_MULTI_EN != 0U)
     uint16_t tick_a;
     uint16_t tick_b;
 
-    if (s_pwm.trig > CURRENT_SAMPLE_MULTI_DELTA_TICK)
+    if (s_pwm.trig > CS_MULTI_DELTA_TICK)
     {
-        tick_a = (uint16_t)(s_pwm.trig - CURRENT_SAMPLE_MULTI_DELTA_TICK);
+        tick_a = (uint16_t)(s_pwm.trig - CS_MULTI_DELTA_TICK);
     }
     else
     {
         tick_a = 0U;
     }
 
-    tick_b = (uint16_t)(s_pwm.trig + CURRENT_SAMPLE_MULTI_DELTA_TICK);
+    tick_b = (uint16_t)(s_pwm.trig + CS_MULTI_DELTA_TICK);
     if (tick_b > PWM_PERIOD)
     {
         tick_b = PWM_PERIOD;
