@@ -29,7 +29,7 @@ void curr_sync_init(void);
 /** @brief PWM duty 更新后刷新下一拍采样窗口和触发点。 */
 void curr_sync_timing(void);
 
-/** @brief 传入当前 VF 电压命令，仅用于高电压单点采样实验。 */
+/** @brief 传入当前 VF 电压命令，用于高调制区切换采样策略。 */
 void curr_set_vf_voltage(int16_t vf_voltage);
 
 /** @brief ADC 中断采样入口。 */

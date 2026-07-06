@@ -77,22 +77,10 @@ typedef struct
     volatile uint8_t blank_count;
     volatile uint8_t valid_mask;
     volatile uint8_t recon_mode;
-    volatile uint8_t region;
-    volatile uint8_t bad_count;
-    volatile uint16_t hold_count;
     volatile uint16_t center;
     volatile uint16_t tick_a;
     volatile uint16_t tick_b;
-    volatile int16_t center_bias;
     volatile uint8_t single_point;
-    volatile uint16_t common;
-    volatile uint16_t u;
-    volatile uint16_t v;
-    volatile uint16_t w;
-    volatile uint16_t t1;
-    volatile uint16_t t2;
-    volatile uint16_t t3;
-    volatile uint32_t switch_count;
 } CurrWindow;
 
 typedef struct
@@ -143,21 +131,19 @@ static uint16_t adc_result12(uint32_t ch);
 static uint16_t read_one(uint32_t ch, uint32_t ch_msk);
 static void irq_clear(void);
 static void sync_reset(void);
-static void diag_clear(void);
+static void state_clear(void);
 static void trigger_update(void);
 static void trigger_pair(uint8_t pair);
 static uint8_t pair_cfg(uint8_t pair, CurrPairCfg* cfg);
 static uint8_t high_vf_single_active(void);
 static void window_select(void);
 static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width,
-                                uint8_t* valid_mask, uint8_t* recon_mode,
-                                uint8_t* region);
+                                uint8_t* valid_mask, uint8_t* recon_mode);
 static void sort_duty_desc(CurrDutyItem* a, CurrDutyItem* b, CurrDutyItem* c);
 static uint8_t pair_from_phases(uint8_t a, uint8_t b);
 static uint8_t valid_bit(uint8_t phase);
 static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t center_bias);
 static void window_hold(void);
-static void hold_bad_sample(void);
 static void sample_pair(Curr3* sample);
 static void sample_resolve(void);
 static uint8_t pair_sample_in_range(uint8_t pair, const Curr3* sample);
@@ -181,7 +167,7 @@ void curr_init(void)
     ldo_init();
     pga_init();
     adc_init();
-    diag_clear();
+    state_clear();
 }
 
 void curr_sample_raw(void)
@@ -438,26 +424,18 @@ static void sync_reset(void)
 {
     s_sync.count = 0;
     s_sync.started = 0U;
-    diag_clear();
+    state_clear();
 }
 
-static void diag_clear(void)
+static void state_clear(void)
 {
     s_win.pair = CURR_PAIR_NONE;
     s_win.hold = 0U;
     s_win.blank_count = 0U;
-    s_win.bad_count = 0U;
-    s_win.hold_count = 0U;
     s_win.center = PWM_ADC_TRIGGER_TICK_DEFAULT;
     s_win.tick_a = PWM_ADC_TRIGGER_TICK_DEFAULT;
     s_win.tick_b = PWM_ADC_TRIGGER_TICK_DEFAULT;
-    s_win.center_bias = 0;
     s_win.single_point = 0U;
-    s_win.common = 0U;
-    s_win.u = 0U;
-    s_win.v = 0U;
-    s_win.w = 0U;
-    s_win.switch_count = 0U;
 
     s_delta.stage = 0U;
     s_delta.a0 = 0;
@@ -566,11 +544,10 @@ static void window_select(void)
     uint8_t pair;
     uint8_t valid_mask;
     uint8_t recon_mode;
-    uint8_t region;
     uint16_t common_width;
     uint16_t center;
 
-    if (ti_window_select(&pair, &center, &common_width, &valid_mask, &recon_mode, &region) == 0U)
+    if (ti_window_select(&pair, &center, &common_width, &valid_mask, &recon_mode) == 0U)
     {
         window_hold();
         return;
@@ -578,13 +555,11 @@ static void window_select(void)
 
     s_win.valid_mask = valid_mask;
     s_win.recon_mode = recon_mode;
-    s_win.region = region;
     window_apply_pair(pair, common_width, (int16_t)center);
 }
 
 static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width,
-                                uint8_t* valid_mask, uint8_t* recon_mode,
-                                uint8_t* region)
+                                uint8_t* valid_mask, uint8_t* recon_mode)
 {
     volatile uint16_t duty_u;
     volatile uint16_t duty_v;
@@ -598,6 +573,9 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
     uint16_t min_width;
     uint16_t case1_width;
     uint16_t open_delay;
+    uint16_t t1;
+    uint16_t t2;
+    uint16_t t3;
 
     pwm_snapshot(&duty_u, &duty_v, &duty_w, &output_on, &brake_on);
     (void)output_on;
@@ -608,12 +586,9 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
     minp = (CurrDutyItem){CURR_PHASE_W, clamp_tick((uint16_t)duty_w)};
     sort_duty_desc(&maxp, &midp, &minp);
 
-    s_win.u = (uint16_t)duty_u;
-    s_win.v = (uint16_t)duty_v;
-    s_win.w = (uint16_t)duty_w;
-    s_win.t1 = minp.duty;
-    s_win.t2 = (uint16_t)(midp.duty - minp.duty);
-    s_win.t3 = (uint16_t)(maxp.duty - midp.duty);
+    t1 = minp.duty;
+    t2 = (uint16_t)(midp.duty - minp.duty);
+    t3 = (uint16_t)(maxp.duty - midp.duty);
 
     reserve = ((CS_MULTI_EN != 0U) && (high_vf_single_active() == 0U)) ?
               (uint16_t)CS_MULTI_DELTA_TICK : 0U;
@@ -621,18 +596,17 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
     min_width = (uint16_t)(open_delay + (uint16_t)CS_TAIL_MARGIN_TICK + reserve);
     case1_width = min_width;
 
-    if (s_win.t1 >= case1_width)
+    if (t1 >= case1_width)
     {
         *pair = CURR_PAIR_ALL;
         *center = (uint16_t)(minp.duty - open_delay);
-        *width = s_win.t1;
+        *width = t1;
         *valid_mask = (uint8_t)(CURR_VALID_U | CURR_VALID_V | CURR_VALID_W);
         *recon_mode = CURR_RECON_ALL;
-        *region = 1U;
         return 1U;
     }
 
-    if (s_win.t2 >= min_width)
+    if (t2 >= min_width)
     {
         *pair = pair_from_phases(maxp.phase, midp.phase);
         if (*pair == CURR_PAIR_NONE)
@@ -640,14 +614,13 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
             return 0U;
         }
         *center = (uint16_t)(midp.duty - open_delay);
-        *width = s_win.t2;
+        *width = t2;
         *valid_mask = (uint8_t)(valid_bit(maxp.phase) | valid_bit(midp.phase));
         *recon_mode = CURR_RECON_PAIR;
-        *region = 2U;
         return 1U;
     }
 
-    if (s_win.t3 >= min_width)
+    if (t3 >= min_width)
     {
         *pair = pair_from_phases(maxp.phase, midp.phase);
         if (*pair == CURR_PAIR_NONE)
@@ -655,10 +628,9 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
             return 0U;
         }
         *center = (uint16_t)(maxp.duty - open_delay);
-        *width = s_win.t3;
+        *width = t3;
         *valid_mask = valid_bit(maxp.phase);
         *recon_mode = CURR_RECON_FILTER;
-        *region = 3U;
         return 1U;
     }
 
@@ -730,7 +702,6 @@ static uint8_t valid_bit(uint8_t phase)
 static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t center_bias)
 {
     uint16_t center;
-    int16_t actual_bias;
     uint16_t delta;
     uint16_t tick_a;
     uint16_t tick_b;
@@ -747,9 +718,7 @@ static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t cente
     {
         delta = 1U;
     }
-    (void)pair;
     center = clamp_sample_tick((uint16_t)center_bias);
-    actual_bias = (int16_t)((int32_t)center - (int32_t)(common_width / 2U));
 
     if (single_point != 0U)
     {
@@ -763,26 +732,19 @@ static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t cente
     }
     reconfigure = (uint8_t)((s_win.pair != pair) || (s_win.center != center) ||
                             (s_win.tick_a != tick_a) || (s_win.tick_b != tick_b) ||
-                            (s_win.center_bias != actual_bias) ||
                             (s_win.single_point != single_point) ||
                             (s_win.hold != 0U));
 
     if ((s_win.pair != pair) && (s_win.pair != CURR_PAIR_NONE))
     {
-        if (s_win.switch_count < 0xFFFFFFFFUL)
-        {
-            s_win.switch_count++;
-        }
         s_win.blank_count = CS_PAIR_SWITCH_BLANK_PWM;
     }
 
     s_win.hold = 0U;
     s_win.pair = pair;
-    s_win.common = common_width;
     s_win.center = center;
     s_win.tick_a = tick_a;
     s_win.tick_b = tick_b;
-    s_win.center_bias = actual_bias;
     s_win.single_point = single_point;
 
     if (reconfigure == 0U)
@@ -808,32 +770,15 @@ static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t cente
 static void window_hold(void)
 {
     s_win.hold = 1U;
-    if (s_win.hold_count < 65535U)
-    {
-        s_win.hold_count++;
-    }
     if (s_win.pair == CURR_PAIR_NONE)
     {
         s_win.pair = CS_PAIR_VW;
         s_win.center = PWM_ADC_TRIGGER_TICK_DEFAULT;
         s_win.tick_a = PWM_ADC_TRIGGER_TICK_DEFAULT;
         s_win.tick_b = PWM_ADC_TRIGGER_TICK_DEFAULT;
-        s_win.center_bias = 0;
         s_win.single_point = 0U;
         pwm_set_adc_trigger(PWM_ADC_TRIGGER_TICK_DEFAULT);
         trigger_pair(s_win.pair);
-    }
-}
-
-static void hold_bad_sample(void)
-{
-    if (s_win.hold_count < 65535U)
-    {
-        s_win.hold_count++;
-    }
-    if (s_win.bad_count < 255U)
-    {
-        s_win.bad_count++;
     }
 }
 
@@ -905,10 +850,6 @@ static void sample_resolve(void)
     if (s_win.blank_count != 0U)
     {
         s_win.blank_count--;
-        if (s_win.hold_count < 65535U)
-        {
-            s_win.hold_count++;
-        }
         return;
     }
 
@@ -934,18 +875,15 @@ static void sample_resolve(void)
 
     if (pair_sample_in_range(s_win.pair, &avg) == 0U)
     {
-        hold_bad_sample();
         return;
     }
 
     reconstruct(s_win.pair, &avg, &physical);
     if (physical_in_hard_range(&physical) == 0U)
     {
-        hold_bad_sample();
         return;
     }
 
-    s_win.bad_count = 0U;
     filter_update(&physical, s_win.valid_mask);
     apply_phys(&physical);
 }
