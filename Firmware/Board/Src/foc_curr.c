@@ -98,26 +98,11 @@ typedef struct
 typedef struct
 {
     volatile uint8_t stage;
-    volatile uint8_t count;
     volatile int16_t a0;
     volatile int16_t a1;
     volatile int16_t b0;
     volatile int16_t b1;
-    volatile int16_t spread0;
-    volatile int16_t spread1;
-} CurrDiag;
-
-typedef struct
-{
-    volatile uint8_t v_valid;
-    volatile uint8_t w_valid;
-    volatile int16_t prev_v;
-    volatile int16_t prev_w;
-    volatile uint32_t iv_spike_count;
-    volatile uint32_t iw_spike_count;
-    volatile uint16_t iv_max_step;
-    volatile uint16_t iw_max_step;
-} CurrQuality;
+} CurrSampleDelta;
 
 typedef struct
 {
@@ -145,8 +130,7 @@ static CurrCache s_phys;
 static CurrCache s_logic;
 static CurrSync s_sync;
 static CurrWindow s_win;
-static CurrDiag s_diag;
-static CurrQuality s_quality;
+static CurrSampleDelta s_delta;
 static CurrPairSample s_sample;
 static CurrFilter s_filter;
 static volatile uint16_t s_vf_voltage_abs;
@@ -183,21 +167,12 @@ static void reconstruct(uint8_t pair, const Curr3* sample, Curr3* physical);
 static void apply_phys(const Curr3* physical);
 static void map_logic(const Curr3* physical);
 static int16_t map_current_sign(int16_t value);
-static void quality_clear(void);
-static void quality_update(const Curr3* physical);
-static void quality_update_phase(int16_t value, volatile uint8_t* valid,
-                                 volatile int16_t* previous,
-                                 volatile uint32_t* spike_count,
-                                 volatile uint16_t* max_step);
-static uint8_t pair_samples_phys_v(uint8_t pair);
-static uint8_t pair_samples_phys_w(uint8_t pair);
 static void filter_clear(void);
 static void filter_update(const Curr3* physical, uint8_t valid_mask);
 static int16_t filter_value(int32_t value);
 static uint16_t clamp_tick(uint16_t tick);
 static uint16_t clamp_sample_tick(uint16_t tick);
 static uint16_t abs_diff_i16(int16_t a, int16_t b);
-static int16_t clamp_spread(int32_t value);
 static uint16_t cnt_to_adc(int16_t cnt, uint16_t offset);
 
 void curr_init(void)
@@ -341,29 +316,25 @@ uint8_t curr_irq(void)
     {
         sample_pair(&s_sample.a);
         s_sample.b = s_sample.a;
-        s_diag.stage = 0U;
-        s_diag.count = 1U;
+        s_delta.stage = 0U;
         sample_resolve();
     }
     else
     {
-        if (s_diag.stage == 0U)
+        if (s_delta.stage == 0U)
         {
             sample_pair(&s_sample.a);
-            s_diag.stage = 1U;
-            s_diag.count = 1U;
+            s_delta.stage = 1U;
             return 0U;
         }
 
         sample_pair(&s_sample.b);
-        s_diag.stage = 0U;
-        s_diag.count = 2U;
+        s_delta.stage = 0U;
         sample_resolve();
     }
 #else
     sample_pair(&s_sample.a);
     s_sample.b = s_sample.a;
-    s_diag.count = 1U;
     sample_resolve();
 #endif
 
@@ -383,40 +354,6 @@ uint16_t curr_raw_adc_u(void) { return s_raw.u; }
 uint16_t curr_raw_adc_v(void) { return s_raw.v; }
 uint16_t curr_raw_adc_w(void) { return s_raw.w; }
 uint32_t curr_sync_count(void) { return s_sync.count; }
-uint8_t curr_multi_enabled(void) { return (uint8_t)(CS_MULTI_EN != 0U); }
-uint8_t curr_dynamic_enabled(void) { return 1U; }
-uint8_t curr_pair(void) { return s_win.pair; }
-uint8_t curr_is_hold(void) { return (uint8_t)((s_win.hold != 0U) || (s_win.blank_count != 0U)); }
-uint16_t curr_hold_count(void) { return s_win.hold_count; }
-uint16_t curr_center_tick(void) { return s_win.center; }
-uint16_t curr_window_u(void) { return s_win.u; }
-uint16_t curr_window_v(void) { return s_win.v; }
-uint16_t curr_window_w(void) { return s_win.w; }
-uint16_t curr_window_common(void) { return s_win.common; }
-uint32_t curr_sample_switch_count(void) { return s_win.switch_count; }
-int16_t curr_sample_center_bias(void) { return s_win.center_bias; }
-uint16_t curr_sample_tick_a(void) { return s_win.tick_a; }
-uint16_t curr_sample_tick_b(void) { return s_win.tick_b; }
-uint8_t curr_sample_region(void) { return s_win.region; }
-uint8_t curr_sample_recon_mode(void) { return s_win.recon_mode; }
-uint8_t curr_sample_valid_mask(void) { return s_win.valid_mask; }
-uint8_t curr_sample_bad_count(void) { return s_win.bad_count; }
-uint16_t curr_sample_t1(void) { return s_win.t1; }
-uint16_t curr_sample_t2(void) { return s_win.t2; }
-uint16_t curr_sample_t3(void) { return s_win.t3; }
-uint32_t curr_iv_spike_count(void) { return s_quality.iv_spike_count; }
-uint32_t curr_iw_spike_count(void) { return s_quality.iw_spike_count; }
-uint16_t curr_iv_max_step(void) { return s_quality.iv_max_step; }
-uint16_t curr_iw_max_step(void) { return s_quality.iw_max_step; }
-uint8_t curr_diag_stage(void) { return s_diag.stage; }
-uint8_t curr_diag_count(void) { return s_diag.count; }
-int16_t curr_diag_a0(void) { return s_diag.a0; }
-int16_t curr_diag_a1(void) { return s_diag.a1; }
-int16_t curr_diag_b0(void) { return s_diag.b0; }
-int16_t curr_diag_b1(void) { return s_diag.b1; }
-int16_t curr_diag_spread0(void) { return s_diag.spread0; }
-int16_t curr_diag_spread1(void) { return s_diag.spread1; }
-uint8_t curr_sample_single_point(void) { return s_win.single_point; }
 
 static void pins_init(void)
 {
@@ -522,18 +459,14 @@ static void diag_clear(void)
     s_win.w = 0U;
     s_win.switch_count = 0U;
 
-    s_diag.stage = 0U;
-    s_diag.count = 0U;
-    s_diag.a0 = 0;
-    s_diag.a1 = 0;
-    s_diag.b0 = 0;
-    s_diag.b1 = 0;
-    s_diag.spread0 = 0;
-    s_diag.spread1 = 0;
+    s_delta.stage = 0U;
+    s_delta.a0 = 0;
+    s_delta.a1 = 0;
+    s_delta.b0 = 0;
+    s_delta.b1 = 0;
 
     s_sample.a = (Curr3){0, 0, 0};
     s_sample.b = (Curr3){0, 0, 0};
-    quality_clear();
     filter_clear();
 }
 
@@ -563,8 +496,7 @@ static void trigger_pair(uint8_t pair)
     ADC_DisableScanChannel(0xFFFFFFFFUL);
     ADC_EnableScanChannel(cfg.channel_mask);
 
-    s_diag.stage = 0U;
-    s_diag.count = 0U;
+    s_delta.stage = 0U;
 
     ADC_DisableChannelInt(ADC_CH_0_MSK | ADC_CH_2_MSK | ADC_CH_3_MSK);
     irq_clear();
@@ -947,15 +879,15 @@ static void sample_pair(Curr3* sample)
             break;
     }
 
-    if (s_diag.stage == 0U)
+    if (s_delta.stage == 0U)
     {
-        s_diag.a0 = first;
-        s_diag.a1 = second;
+        s_delta.a0 = first;
+        s_delta.a1 = second;
     }
     else
     {
-        s_diag.b0 = first;
-        s_diag.b1 = second;
+        s_delta.b0 = first;
+        s_delta.b1 = second;
     }
 }
 
@@ -980,17 +912,10 @@ static void sample_resolve(void)
         return;
     }
 
-    s_diag.spread0 = clamp_spread((int32_t)s_diag.b0 - (int32_t)s_diag.a0);
-    s_diag.spread1 = clamp_spread((int32_t)s_diag.b1 - (int32_t)s_diag.a1);
-
 #if (CS_MULTI_EN != 0U)
-    if (s_win.single_point != 0U)
-    {
-        s_diag.spread0 = 0;
-        s_diag.spread1 = 0;
-    }
-    else if ((abs_diff_i16(s_diag.b0, s_diag.a0) > (uint16_t)CS_MULTI_SPREAD_LIMIT_CNT) ||
-             (abs_diff_i16(s_diag.b1, s_diag.a1) > (uint16_t)CS_MULTI_SPREAD_LIMIT_CNT))
+    if ((s_win.single_point == 0U) &&
+        ((abs_diff_i16(s_delta.b0, s_delta.a0) > (uint16_t)CS_MULTI_SPREAD_LIMIT_CNT) ||
+         (abs_diff_i16(s_delta.b1, s_delta.a1) > (uint16_t)CS_MULTI_SPREAD_LIMIT_CNT)))
     {
         use_avg = 0U;
     }
@@ -1137,7 +1062,6 @@ static void apply_phys(const Curr3* physical)
     s_raw.w = cnt_to_adc(physical->w, s_zero.w);
 
     map_logic(physical);
-    quality_update(physical);
 }
 
 static void map_logic(const Curr3* physical)
@@ -1177,18 +1101,6 @@ static int16_t map_current_sign(int16_t value)
 #else
     return value;
 #endif
-}
-
-static void quality_clear(void)
-{
-    s_quality.v_valid = 0U;
-    s_quality.w_valid = 0U;
-    s_quality.prev_v = 0;
-    s_quality.prev_w = 0;
-    s_quality.iv_spike_count = 0U;
-    s_quality.iw_spike_count = 0U;
-    s_quality.iv_max_step = 0U;
-    s_quality.iw_max_step = 0U;
 }
 
 static void filter_clear(void)
@@ -1241,70 +1153,6 @@ static int16_t filter_value(int32_t value)
     return (int16_t)value;
 }
 
-static void quality_update(const Curr3* physical)
-{
-    if (pair_samples_phys_v(s_win.pair) != 0U)
-    {
-        quality_update_phase(physical->v, &s_quality.v_valid, &s_quality.prev_v,
-                             &s_quality.iv_spike_count, &s_quality.iv_max_step);
-    }
-    else
-    {
-        s_quality.v_valid = 0U;
-    }
-
-    if (pair_samples_phys_w(s_win.pair) != 0U)
-    {
-        quality_update_phase(physical->w, &s_quality.w_valid, &s_quality.prev_w,
-                             &s_quality.iw_spike_count, &s_quality.iw_max_step);
-    }
-    else
-    {
-        s_quality.w_valid = 0U;
-    }
-}
-
-static void quality_update_phase(int16_t value, volatile uint8_t* valid,
-                                 volatile int16_t* previous,
-                                 volatile uint32_t* spike_count,
-                                 volatile uint16_t* max_step)
-{
-    uint16_t step;
-
-    if (*valid == 0U)
-    {
-        *previous = value;
-        *valid = 1U;
-        return;
-    }
-
-    step = abs_diff_i16(value, *previous);
-    if (step > *max_step)
-    {
-        *max_step = step;
-    }
-    if (step > (uint16_t)CS_SPIKE_LIMIT_CNT)
-    {
-        if (*spike_count < 0xFFFFFFFFUL)
-        {
-            (*spike_count)++;
-        }
-    }
-    *previous = value;
-}
-
-static uint8_t pair_samples_phys_v(uint8_t pair)
-{
-    return (uint8_t)(((s_win.valid_mask & CURR_VALID_V) != 0U) ||
-                     (pair == CURR_PAIR_ALL) || (pair == CS_PAIR_UV) || (pair == CS_PAIR_VW));
-}
-
-static uint8_t pair_samples_phys_w(uint8_t pair)
-{
-    return (uint8_t)(((s_win.valid_mask & CURR_VALID_W) != 0U) ||
-                     (pair == CURR_PAIR_ALL) || (pair == CS_PAIR_UW) || (pair == CS_PAIR_VW));
-}
-
 static uint16_t clamp_tick(uint16_t tick)
 {
     if (tick > PWM_PERIOD)
@@ -1345,19 +1193,6 @@ static uint16_t abs_diff_i16(int16_t a, int16_t b)
         return 65535U;
     }
     return (uint16_t)diff;
-}
-
-static int16_t clamp_spread(int32_t value)
-{
-    if (value > 32767)
-    {
-        return 32767;
-    }
-    if (value < -32767)
-    {
-        return -32767;
-    }
-    return (int16_t)value;
 }
 
 static uint16_t cnt_to_adc(int16_t cnt, uint16_t offset)

@@ -41,22 +41,6 @@ typedef struct
     volatile uint8_t pwm_off_safe;
     volatile uint8_t pwm_run_ok;
 
-    volatile uint8_t sample_pair;
-    volatile uint8_t sample_hold;
-    volatile uint16_t sample_hold_count;
-    volatile uint16_t sample_pair_hold_left;
-    volatile uint16_t sample_center_tick;
-    volatile uint16_t sample_window_u;
-    volatile uint16_t sample_window_v;
-    volatile uint16_t sample_window_w;
-    volatile uint8_t sample_three_shunt;
-    volatile uint16_t sample_common_window;
-    volatile uint32_t sample_switch_count;
-    volatile uint32_t sample_fallback_count;
-    volatile uint32_t iv_spike_count;
-    volatile uint32_t iw_spike_count;
-    volatile uint16_t iv_max_step;
-    volatile uint16_t iw_max_step;
 } BoardWatchState_t;
 
 volatile BoardWatchState_t g_board_watch;
@@ -134,22 +118,6 @@ static void BoardWatch_UpdateSnapshot(void)
     g_board_watch.pwm_off_safe = pwm_is_off_safe();
     g_board_watch.pwm_run_ok = pwm_is_running();
 
-    g_board_watch.sample_pair = curr_pair();
-    g_board_watch.sample_hold = curr_is_hold();
-    g_board_watch.sample_hold_count = curr_hold_count();
-    g_board_watch.sample_pair_hold_left = curr_sample_pair_hold_left();
-    g_board_watch.sample_center_tick = curr_center_tick();
-    g_board_watch.sample_window_u = curr_window_u();
-    g_board_watch.sample_window_v = curr_window_v();
-    g_board_watch.sample_window_w = curr_window_w();
-    g_board_watch.sample_three_shunt = curr_three_shunt_active();
-    g_board_watch.sample_common_window = curr_window_common();
-    g_board_watch.sample_switch_count = curr_sample_switch_count();
-    g_board_watch.sample_fallback_count = curr_sample_fallback_count();
-    g_board_watch.iv_spike_count = curr_iv_spike_count();
-    g_board_watch.iw_spike_count = curr_iw_spike_count();
-    g_board_watch.iv_max_step = curr_iv_max_step();
-    g_board_watch.iw_max_step = curr_iw_max_step();
 }
 
 static void BoardWatch_Delay(void)

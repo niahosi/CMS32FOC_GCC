@@ -33,8 +33,6 @@
 #define CS_HIGH_VF_SINGLE_VOLTAGE 660
 /** @brief 采样 pair 切换后丢弃的 PWM 周期数。 */
 #define CS_PAIR_SWITCH_BLANK_PWM 1U
-/** @brief 相邻采样跳变超过该 count 记一次尖峰。 */
-#define CS_SPIKE_LIMIT_CNT 100
 /** @brief 单个 ADC 扣零漂样本的物理极限；超过说明不是正常 12-bit ADC 电流。 */
 #define CS_SAMPLE_ABS_HARD_LIMIT_CNT 8192
 
