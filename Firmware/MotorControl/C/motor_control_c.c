@@ -315,14 +315,6 @@ uint8_t MotorControl_FastLoopFromAdcIrq(void)
         return 0U;
     }
 
-    if (curr_sample_fault() != 0U)
-    {
-        s_mc.state = MC_STATE_FAULT;
-        s_mc.fault = MC_FAULT_CURRENT;
-        enter_safe_state();
-        return 1U;
-    }
-
     if ((s_mc.enabled != 0U) && (s_mc.state == MC_STATE_CLOSED_LOOP))
     {
         if (s_mc.mode == MC_MODE_VF_OPEN_LOOP)
@@ -1164,7 +1156,6 @@ static void fill_watch(MotorControlWatch_t* out)
     out->sample_recon_mode = curr_sample_recon_mode();
     out->sample_valid_mask = curr_sample_valid_mask();
     out->sample_bad_count = curr_sample_bad_count();
-    out->sample_fault = curr_sample_fault();
     out->sample_t1 = curr_sample_t1();
     out->sample_t2 = curr_sample_t2();
     out->sample_t3 = curr_sample_t3();
@@ -1257,7 +1248,6 @@ static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
     dst->sample_recon_mode = src->sample_recon_mode;
     dst->sample_valid_mask = src->sample_valid_mask;
     dst->sample_bad_count = src->sample_bad_count;
-    dst->sample_fault = src->sample_fault;
     dst->sample_t1 = src->sample_t1;
     dst->sample_t2 = src->sample_t2;
     dst->sample_t3 = src->sample_t3;

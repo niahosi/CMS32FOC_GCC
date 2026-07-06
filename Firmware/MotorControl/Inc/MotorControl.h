@@ -103,7 +103,6 @@ typedef struct
     uint8_t sample_recon_mode;
     uint8_t sample_valid_mask;
     uint8_t sample_bad_count;
-    uint8_t sample_fault;
     uint16_t sample_t1;
     uint16_t sample_t2;
     uint16_t sample_t3;

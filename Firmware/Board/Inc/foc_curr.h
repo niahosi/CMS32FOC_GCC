@@ -75,7 +75,6 @@ uint8_t curr_sample_region(void);
 uint8_t curr_sample_recon_mode(void);
 uint8_t curr_sample_valid_mask(void);
 uint8_t curr_sample_bad_count(void);
-uint8_t curr_sample_fault(void);
 uint16_t curr_sample_t1(void);
 uint16_t curr_sample_t2(void);
 uint16_t curr_sample_t3(void);

@@ -1,7 +1,7 @@
 /**
  * @file TuneConfig.h
- * @brief 当前调试阶段的采样、保护、控制环和开环默认参数。
- * @details 小电机电流采样仍在调整，优先修改本文件。
+ * @brief 已验证的采样、控制环和开环默认参数。
+ * @details 当前电流采样采用三电阻低边 T1/T2/T3 动态窗口方案。
  */
 
 #pragma once
@@ -15,76 +15,26 @@
 /** @brief 运行时 CMP0 同步采样 V/W 两相，U 相由 -V-W 重构。 */
 #define CS_PAIR_VW 2U
 
-#define CS_PAIR_SELECT_DYNAMIC 0U
-#define CS_PAIR_SELECT_PREFERRED 1U
-#define CS_PAIR_SELECT_FIXED 2U
-/** @brief 采样 pair 选择模式：固定采样时刻下动态选择当前可采的两相。 */
-#define CS_PAIR_SELECT_MODE CS_PAIR_SELECT_DYNAMIC
-/** @brief 优先使用的采样 pair；可在 UV/UW/VW 中扫一遍找最干净组合。 */
-#define CS_PAIR_PREFERRED CS_PAIR_VW
-/** @brief 优先 pair 共同窗口低于该值时，回退动态选择。 */
-#define CS_PAIR_PREFERRED_MIN_WINDOW_TICK 500U
-
 /** @brief 同一低边窗口双点采样开关。 */
 #define CS_MULTI_EN 1U
 /** @brief 双点采样与主采样点的偏移 tick。 */
 #define CS_MULTI_DELTA_TICK 4U
 /** @brief 双点采样两点差值超过该值时，认为本拍落在开关噪声或恢复区。 */
 #define CS_MULTI_SPREAD_LIMIT_CNT 40
-/** @brief 双点差值超限时保持上一拍；调试原始波形时关闭。 */
-#define CS_MULTI_SPREAD_REJECT_EN 0U
-
-/** @brief 使用固定绝对 EPWM tick 采样；0 表示按 TI T1/T2/T3 镜像窗口动态放 CMP。 */
-#define CS_FIXED_SAMPLE_TICK_EN 0U
-/** @brief 固定采样中心 tick；FALLING 下应落在下降计数经过 duty 之后。 */
-#define CS_FIXED_SAMPLE_TICK 650U
-
-#define CS_LOW_WINDOW_FROM_DUTY 0U
-#define CS_LOW_WINDOW_FROM_OFF_TIME 1U
-/** @brief 当前先回到已验证过的 duty 窗口模型；动态窗口后续再按扇区重做。 */
-#define CS_LOW_WINDOW_MODE CS_LOW_WINDOW_FROM_DUTY
-/** @brief 采样点离低边窗口起点的最小恢复时间。 */
-#define CS_EDGE_SETTLE_TICK (PWM_DEADTIME_TICKS + 32U)
 /** @brief 下降计数经过 duty 后，下管刚打开到 ADC 主采样点的延迟。 */
 #define CS_OPEN_SETTLE_TICK (PWM_DEADTIME_TICKS + 4U)//(PWM_DEADTIME_TICKS + 80U)
 /** @brief 采样点离低边窗口末端的最小安全余量。 */
 #define CS_TAIL_MARGIN_TICK 60U
 /** @brief Case3 无效相使用的软件低通滤波右移。 */
 #define CS_FILTER_SHIFT 3U
-/** @brief T1 只比最小宽度略大时提前让出 case1；当前小电机先尽量保留三相实采窗口。 */
-#define CS_REGION1_ENTER_MARGIN_TICK 0U
-/** @brief 共同窗口低于该值时不增加中心点偏移。 */
-#define CS_BIAS_MID_WINDOW_TICK 500U
-/** @brief 共同窗口高于该值时使用较大的中心点偏移。 */
-#define CS_BIAS_HIGH_WINDOW_TICK 900U
-/** @brief 中等共同窗口的中心点偏移。 */
-#define CS_BIAS_MID_TICK 0
-/** @brief 大共同窗口的中心点偏移。 */
-#define CS_BIAS_HIGH_TICK 0
-/** @brief UV pair 的中心点固定偏移。 */
-#define CS_PAIR_BIAS_UV_TICK 0
-/** @brief UW pair 的中心点固定偏移。 */
-#define CS_PAIR_BIAS_UW_TICK 0
-/** @brief VW pair 的中心点固定偏移。 */
-#define CS_PAIR_BIAS_VW_TICK 0
 /** @brief 高 VF 电压时切换为窗口中心单点采样，减少最短低边窗口所需余量。 */
 #define CS_HIGH_VF_SINGLE_EN 1U
 /** @brief 高 VF 单点采样阈值，单位为 VF 电压命令 count。 */
 #define CS_HIGH_VF_SINGLE_VOLTAGE 660
-/** @brief 单相低边窗口小于该值时，不参与动态两相选择。 */
-#define CS_MIN_WINDOW_TICK (PWM_DEADTIME_TICKS + 32U)
-/** @brief 新采样 pair 必须多出的共同窗口 tick，才允许切换。 */
-#define CS_PAIR_SWITCH_HYST_TICK 80U
-/** @brief 采样 pair 切换前的最小保持 PWM 周期数。 */
-#define CS_PAIR_MIN_HOLD_PWM 16U
 /** @brief 采样 pair 切换后丢弃的 PWM 周期数。 */
 #define CS_PAIR_SWITCH_BLANK_PWM 1U
 /** @brief 相邻采样跳变超过该 count 记一次尖峰。 */
 #define CS_SPIKE_LIMIT_CNT 100
-/** @brief 相邻采样跳变超限时拒收本拍；调试原始波形时关闭。 */
-#define CS_SPIKE_REJECT_EN 0U
-/** @brief 连续坏样本达到该次数时关闭 PWM；255 表示调试时基本不触发。 */
-#define CS_BAD_SAMPLE_SHUTDOWN_COUNT 255U
 /** @brief 单个 ADC 扣零漂样本的物理极限；超过说明不是正常 12-bit ADC 电流。 */
 #define CS_SAMPLE_ABS_HARD_LIMIT_CNT 8192
 

@@ -79,8 +79,6 @@ typedef struct
     volatile uint8_t recon_mode;
     volatile uint8_t region;
     volatile uint8_t bad_count;
-    volatile uint8_t fault;
-    volatile uint16_t pair_hold_count;
     volatile uint16_t hold_count;
     volatile uint16_t center;
     volatile uint16_t tick_a;
@@ -175,13 +173,11 @@ static uint8_t pair_from_phases(uint8_t a, uint8_t b);
 static uint8_t valid_bit(uint8_t phase);
 static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t center_bias);
 static void window_hold(void);
-static void reject_bad_sample(void);
-static int16_t pair_bias_tick(uint8_t pair);
+static void hold_bad_sample(void);
 static void sample_pair(Curr3* sample);
 static void sample_resolve(void);
 static uint8_t pair_sample_in_range(uint8_t pair, const Curr3* sample);
 static uint8_t physical_in_hard_range(const Curr3* physical);
-static uint8_t physical_step_in_range(const Curr3* physical);
 static uint8_t current_in_hard_range(int16_t value);
 static void reconstruct(uint8_t pair, const Curr3* sample, Curr3* physical);
 static void apply_phys(const Curr3* physical);
@@ -405,7 +401,6 @@ uint8_t curr_sample_region(void) { return s_win.region; }
 uint8_t curr_sample_recon_mode(void) { return s_win.recon_mode; }
 uint8_t curr_sample_valid_mask(void) { return s_win.valid_mask; }
 uint8_t curr_sample_bad_count(void) { return s_win.bad_count; }
-uint8_t curr_sample_fault(void) { return s_win.fault; }
 uint16_t curr_sample_t1(void) { return s_win.t1; }
 uint16_t curr_sample_t2(void) { return s_win.t2; }
 uint16_t curr_sample_t3(void) { return s_win.t3; }
@@ -515,8 +510,6 @@ static void diag_clear(void)
     s_win.hold = 0U;
     s_win.blank_count = 0U;
     s_win.bad_count = 0U;
-    s_win.fault = 0U;
-    s_win.pair_hold_count = 0U;
     s_win.hold_count = 0U;
     s_win.center = PWM_ADC_TRIGGER_TICK_DEFAULT;
     s_win.tick_a = PWM_ADC_TRIGGER_TICK_DEFAULT;
@@ -694,7 +687,7 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
               (uint16_t)CS_MULTI_DELTA_TICK : 0U;
     open_delay = (uint16_t)(CS_OPEN_SETTLE_TICK + reserve);
     min_width = (uint16_t)(open_delay + (uint16_t)CS_TAIL_MARGIN_TICK + reserve);
-    case1_width = (uint16_t)(min_width + (uint16_t)CS_REGION1_ENTER_MARGIN_TICK);
+    case1_width = min_width;
 
     if (s_win.t1 >= case1_width)
     {
@@ -822,14 +815,8 @@ static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t cente
     {
         delta = 1U;
     }
-    center_bias = (int16_t)(center_bias + pair_bias_tick(pair));
-#if (CS_FIXED_SAMPLE_TICK_EN != 0U)
-    (void)center_bias;
-    center = clamp_sample_tick((uint16_t)CS_FIXED_SAMPLE_TICK);
-#else
     (void)pair;
     center = clamp_sample_tick((uint16_t)center_bias);
-#endif
     actual_bias = (int16_t)((int32_t)center - (int32_t)(common_width / 2U));
 
     if (single_point != 0U)
@@ -854,7 +841,6 @@ static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t cente
         {
             s_win.switch_count++;
         }
-        s_win.pair_hold_count = 0U;
         s_win.blank_count = CS_PAIR_SWITCH_BLANK_PWM;
     }
 
@@ -907,7 +893,7 @@ static void window_hold(void)
     }
 }
 
-static void reject_bad_sample(void)
+static void hold_bad_sample(void)
 {
     if (s_win.hold_count < 65535U)
     {
@@ -916,27 +902,6 @@ static void reject_bad_sample(void)
     if (s_win.bad_count < 255U)
     {
         s_win.bad_count++;
-    }
-    if (s_win.bad_count >= (uint8_t)CS_BAD_SAMPLE_SHUTDOWN_COUNT)
-    {
-        s_win.fault = 1U;
-        s_win.hold = 1U;
-    }
-}
-
-static int16_t pair_bias_tick(uint8_t pair)
-{
-    switch (pair)
-    {
-        case CS_PAIR_UV:
-            return (int16_t)CS_PAIR_BIAS_UV_TICK;
-
-        case CS_PAIR_UW:
-            return (int16_t)CS_PAIR_BIAS_UW_TICK;
-
-        case CS_PAIR_VW:
-        default:
-            return (int16_t)CS_PAIR_BIAS_VW_TICK;
     }
 }
 
@@ -1027,12 +992,7 @@ static void sample_resolve(void)
     else if ((abs_diff_i16(s_diag.b0, s_diag.a0) > (uint16_t)CS_MULTI_SPREAD_LIMIT_CNT) ||
              (abs_diff_i16(s_diag.b1, s_diag.a1) > (uint16_t)CS_MULTI_SPREAD_LIMIT_CNT))
     {
-#if (CS_MULTI_SPREAD_REJECT_EN != 0U)
-        reject_bad_sample();
-        return;
-#else
         use_avg = 0U;
-#endif
     }
 #endif
 
@@ -1049,20 +1009,14 @@ static void sample_resolve(void)
 
     if (pair_sample_in_range(s_win.pair, &avg) == 0U)
     {
-        reject_bad_sample();
+        hold_bad_sample();
         return;
     }
 
     reconstruct(s_win.pair, &avg, &physical);
     if (physical_in_hard_range(&physical) == 0U)
     {
-        reject_bad_sample();
-        return;
-    }
-
-    if (physical_step_in_range(&physical) == 0U)
-    {
-        reject_bad_sample();
+        hold_bad_sample();
         return;
     }
 
@@ -1118,22 +1072,6 @@ static uint8_t physical_in_hard_range(const Curr3* physical)
     return (uint8_t)(current_in_hard_range(physical->u) &&
                      current_in_hard_range(physical->v) &&
                      current_in_hard_range(physical->w));
-}
-
-static uint8_t physical_step_in_range(const Curr3* physical)
-{
-#if (CS_SPIKE_REJECT_EN != 0U)
-    if (s_sync.count < 4U)
-    {
-        return 1U;
-    }
-    return (uint8_t)((abs_diff_i16(physical->u, s_phys.u) <= (uint16_t)CS_SPIKE_LIMIT_CNT) &&
-                     (abs_diff_i16(physical->v, s_phys.v) <= (uint16_t)CS_SPIKE_LIMIT_CNT) &&
-                     (abs_diff_i16(physical->w, s_phys.w) <= (uint16_t)CS_SPIKE_LIMIT_CNT));
-#else
-    (void)physical;
-    return 1U;
-#endif
 }
 
 static uint8_t current_in_hard_range(int16_t value)
