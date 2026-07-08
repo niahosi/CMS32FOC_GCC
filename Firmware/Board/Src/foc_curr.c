@@ -598,11 +598,20 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
 
     if (t1 >= case1_width)
     {
+#if (CS_USE_2PHASE_IN_ALL_WINDOW != 0U)
+        *pair = CS_ALL_WINDOW_PAIR;
+        if (*pair > CS_PAIR_VW)
+        {
+            return 0U;
+        }
+        *recon_mode = CURR_RECON_PAIR;
+#else
         *pair = CURR_PAIR_ALL;
+        *recon_mode = CURR_RECON_ALL;
+#endif
         *center = (uint16_t)(minp.duty - open_delay);
         *width = t1;
         *valid_mask = (uint8_t)(CURR_VALID_U | CURR_VALID_V | CURR_VALID_W);
-        *recon_mode = CURR_RECON_ALL;
         return 1U;
     }
 

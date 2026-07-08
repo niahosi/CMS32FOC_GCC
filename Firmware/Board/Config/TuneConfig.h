@@ -14,6 +14,10 @@
 #define CS_PAIR_UW 1U
 /** @brief 运行时 CMP0 同步采样 V/W 两相，U 相由 -V-W 重构。 */
 #define CS_PAIR_VW 2U
+/** @brief T1 三相均有效窗口也只采两相，降低单 ADC 顺序扫描时差。 */
+#define CS_USE_2PHASE_IN_ALL_WINDOW 1U
+/** @brief T1 三相均有效窗口默认采样 pair；U/V 的 ADC 顺序时差最短且 pair 稳定。 */
+#define CS_ALL_WINDOW_PAIR CS_PAIR_UV
 
 /** @brief 同一低边窗口双点采样开关。 */
 #define CS_MULTI_EN 1U
@@ -46,6 +50,36 @@
 #define MOT_CHECK_MA600_SAMPLES 10u
 /** @brief MA600 角度缓存允许的最大年龄。 */
 #define MOT_ANGLE_MAX_AGE 4u
+/** @brief 单次控制周期允许的最大 MA600 raw 跳变；超过认为是 SPI/角度坏样本。 */
+#define MOT_ENCODER_MAX_STEP_RAW 8192U
+/** @brief MA600 侧轴 BCT 补偿是否启用；只写 RAM 寄存器，不存 NVM。 */
+#define MOT_ENCODER_SIDE_BCT_EN 1U
+/** @brief MA600 侧轴 BCT 强度，按手册 BCT = 258 * (1 - 1 / k)。 */
+#define MOT_ENCODER_SIDE_BCT 180U
+/** @brief MA600 是否削弱 X 轴；削弱磁场幅值较大的轴。 */
+#define MOT_ENCODER_SIDE_ETX 0U
+/** @brief MA600 是否削弱 Y 轴；ETX/ETY 不要同时为 1。 */
+#define MOT_ENCODER_SIDE_ETY 1U
+/** @brief MA600 MTSP 寄存器是否配置为 speed 输出；0 为普通角度/多圈模式。 */
+#define MOT_ENCODER_MTSP_SPEED_EN 0U
+/** @brief 快环 MA600 读取是否使用 32-bit angle+speed 帧；先默认 16-bit angle 帧做 A/B 验证。 */
+#define MOT_ENCODER_FAST_READ_SPEED_FRAME 0U
+
+#if (MOT_ENCODER_FAST_READ_SPEED_FRAME != 0U) && (MOT_ENCODER_MTSP_SPEED_EN == 0U)
+#error "32-bit MA600 speed frame requires MOT_ENCODER_MTSP_SPEED_EN"
+#endif
+
+#if (MOT_ENCODER_SIDE_BCT > 255U)
+#error "MOT_ENCODER_SIDE_BCT must be 0..255"
+#endif
+
+#if (MOT_ENCODER_SIDE_ETX > 1U) || (MOT_ENCODER_SIDE_ETY > 1U)
+#error "MOT_ENCODER_SIDE_ETX and MOT_ENCODER_SIDE_ETY must be 0 or 1"
+#endif
+
+#if (MOT_ENCODER_SIDE_ETX != 0U) && (MOT_ENCODER_SIDE_ETY != 0U)
+#error "MA600 BCT should trim only one axis; do not enable ETX and ETY together"
+#endif
 
 /** @brief 闭环前对齐 d 轴电压幅值。 */
 #define MOT_ALIGN_VD 240
@@ -58,7 +92,7 @@
 /** @brief 正反拖动零位扫描的 d 轴电压幅值。 */
 #define MOT_ALIGN_SCAN_VD 400
 /** @brief 正反拖动零位扫描的快速拖动速度给定。 */
-#define MOT_ALIGN_SCAN_FAST_SPEED 400L
+#define MOT_ALIGN_SCAN_FAST_SPEED 100L
 /** @brief 正反拖动零位扫描的低速采样速度给定。 */
 #define MOT_ALIGN_SCAN_SLOW_SPEED 40L
 /** @brief 反向快速预拖动半电周期数。 */

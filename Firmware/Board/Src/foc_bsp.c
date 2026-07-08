@@ -15,6 +15,7 @@ static void clock_init(void);
 static void gpio_init(void);
 static void encoder_init(void);
 
+
 void bsp_init(void)
 {
     clock_init();
@@ -23,8 +24,11 @@ void bsp_init(void)
     bsp_update_angle();
     curr_init();
     pwm_init();
-
     curr_calib(BOARD_CURRENT_OFFSET_SAMPLES);
+}
+
+void bsp_start_adc_sync(void)
+{
     curr_sync_init();
 }
 
@@ -40,12 +44,26 @@ uint8_t bsp_update_angle(void)
 
 uint8_t bsp_update_angle_fast(void)
 {
+#if (MOT_ENCODER_FAST_READ_SPEED_FRAME != 0U)
+    return ma600_update_speed_fast();
+#else
     return ma600_update_fast();
+#endif
+}
+
+uint8_t bsp_update_angle_speed_fast(void)
+{
+    return ma600_update_speed_fast();
 }
 
 uint16_t bsp_angle_raw(void)
 {
     return ma600_raw();
+}
+
+int16_t bsp_angle_speed_raw(void)
+{
+    return ma600_speed_raw();
 }
 
 uint8_t bsp_angle_ok(void)
@@ -61,6 +79,11 @@ uint8_t bsp_angle_age(void)
 uint16_t bsp_read_angle(void)
 {
     return ma600_read_angle();
+}
+
+void bsp_service_slow(void)
+{
+    ma600_service_config();
 }
 
 /**

@@ -25,26 +25,21 @@ volatile MotorControlCommand_t g_motor_cmd = {
     .voltage_theta_offset = 0,
 };
 
-volatile MotorControlWatch_t g_motor_watch;
-volatile uint32_t g_app_boot_stage;
-volatile uint32_t g_app_loop_count;
-volatile uint32_t g_app_adc_irq_count;
-volatile uint32_t g_app_adc_ready_count;
+ volatile MotorControlWatch_t g_motor_watch;
+// volatile uint32_t g_app_boot_stage;
+// volatile uint32_t g_app_loop_count;
+// volatile uint32_t g_app_adc_irq_count;
+// volatile uint32_t g_app_adc_ready_count;
 
 int main(void)
 {
-    g_app_boot_stage = 1U;
     bsp_init();
-    g_app_boot_stage = 2U;
     MotorControl_Init();
-    g_app_boot_stage = 3U;
     MotorControl_UpdateWatch(&g_motor_watch);
     bsp_start_adc_sync();
-    g_app_boot_stage = 4U;
 
     while (1)
     {
-        g_app_loop_count++;
         MotorControl_ApplyCommand(&g_motor_cmd);
         MotorControl_RunSlowLoop();
         MotorControl_UpdateWatch(&g_motor_watch);
@@ -53,9 +48,8 @@ int main(void)
 
 void ADC_IRQHandler(void)
 {
-    g_app_adc_irq_count++;
     if (MotorControl_FastLoopFromAdcIrq() != 0U)
     {
-        g_app_adc_ready_count++;
+        // g_app_adc_ready_count++;
     }
 }

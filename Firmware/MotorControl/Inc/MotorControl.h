@@ -52,6 +52,10 @@ typedef struct
     int32_t encoder_pos;
     uint8_t encoder_age;
     uint8_t encoder_ok;
+    int16_t encoder_raw_step;
+    int16_t encoder_reject_step;
+    uint16_t encoder_reject_raw;
+    uint32_t encoder_reject_count;
     uint8_t align_done;
     uint32_t align_ticks;
     uint16_t align_theta;

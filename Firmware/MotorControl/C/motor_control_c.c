@@ -60,6 +60,10 @@ typedef struct
     uint16_t encoder_prev_raw;
     int16_t encoder_delta;
     int32_t encoder_pos;
+    int16_t encoder_raw_step;
+    int16_t encoder_reject_step;
+    uint16_t encoder_reject_raw;
+    uint32_t encoder_reject_count;
     int32_t speed_fb;
     int32_t speed_fb_diff;
     int32_t speed_fb_ma600;
@@ -112,6 +116,11 @@ static int16_t slew_s16(int16_t current, int16_t target, int16_t step);
 static int16_t align_trim_from_raw(uint16_t raw, uint16_t target_theta);
 static uint8_t current_ok(void);
 static uint16_t electrical_from_raw(uint16_t raw, int16_t trim);
+static int16_t encoder_raw_delta(uint16_t raw);
+static uint8_t encoder_raw_plausible(uint16_t raw);
+static uint8_t hold_last_encoder_angle(void);
+static uint8_t reject_bad_encoder_angle(uint16_t raw);
+static void accept_encoder_angle(uint16_t raw);
 static int16_t current_voltage_limit(void);
 static void reset_encoder_state(void);
 static void reset_current_loop(void);
@@ -245,6 +254,8 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
 
 void MotorControl_RunSlowLoop(void)
 {
+    bsp_service_slow();
+
     s_mc.current.u = curr_u();
     s_mc.current.v = curr_v();
     s_mc.current.w = curr_w();
@@ -495,6 +506,64 @@ static uint16_t electrical_from_raw(uint16_t raw, int16_t trim)
 #endif
 }
 
+static int16_t encoder_raw_delta(uint16_t raw)
+{
+    return (int16_t)(raw - s_mc.encoder_raw);
+}
+
+static uint8_t encoder_raw_plausible(uint16_t raw)
+{
+    const int16_t delta = encoder_raw_delta(raw);
+
+    if (s_mc.encoder_initialized == 0U)
+    {
+        return 1U;
+    }
+
+    return (uint8_t)((delta <= (int16_t)MOT_ENCODER_MAX_STEP_RAW) &&
+                     (delta >= -(int16_t)MOT_ENCODER_MAX_STEP_RAW));
+}
+
+static uint8_t hold_last_encoder_angle(void)
+{
+    if (s_mc.encoder_age < 255U)
+    {
+        s_mc.encoder_age++;
+    }
+
+    s_mc.encoder_ok = (uint8_t)((s_mc.encoder_initialized != 0U) &&
+                                (s_mc.encoder_age <= MOT_ANGLE_MAX_AGE));
+    return s_mc.encoder_ok;
+}
+
+static uint8_t reject_bad_encoder_angle(uint16_t raw)
+{
+    s_mc.encoder_reject_count++;
+    s_mc.encoder_reject_step = encoder_raw_delta(raw);
+    s_mc.encoder_reject_raw = raw;
+    return hold_last_encoder_angle();
+}
+
+static void accept_encoder_angle(uint16_t raw)
+{
+    if (s_mc.encoder_initialized == 0U)
+    {
+        s_mc.encoder_raw_step = 0;
+        s_mc.encoder_prev_raw = raw;
+        s_mc.encoder_delta = 0;
+        s_mc.encoder_initialized = 1U;
+    }
+    else
+    {
+        s_mc.encoder_raw_step = encoder_raw_delta(raw);
+    }
+
+    s_mc.encoder_raw = raw;
+    s_mc.encoder_elec = electrical_from_raw(raw, s_mc.command.elec_zero_trim);
+    s_mc.encoder_ok = 1U;
+    s_mc.encoder_age = 0U;
+}
+
 static int16_t current_voltage_limit(void)
 {
     int16_t limit = s_mc.command.current_v_limit;
@@ -513,6 +582,10 @@ static void reset_encoder_state(void)
     s_mc.encoder_prev_raw = 0U;
     s_mc.encoder_delta = 0;
     s_mc.encoder_pos = 0;
+    s_mc.encoder_raw_step = 0;
+    s_mc.encoder_reject_step = 0;
+    s_mc.encoder_reject_raw = 0U;
+    s_mc.encoder_reject_count = 0U;
     s_mc.speed_fb = 0;
     s_mc.speed_fb_diff = 0;
     s_mc.speed_fb_ma600 = 0;
@@ -567,27 +640,18 @@ static uint8_t update_encoder_angle(void)
 
     ok = bsp_update_angle_fast();
     raw = bsp_angle_raw();
-    s_mc.encoder_ok = (uint8_t)((ok != 0U) && (bsp_angle_ok() != 0U));
-    s_mc.encoder_age = bsp_angle_age();
 
-    if (s_mc.encoder_ok == 0U)
+    if ((ok == 0U) || (bsp_angle_ok() == 0U))
     {
-        if (s_mc.encoder_age < 255U)
-        {
-            s_mc.encoder_age++;
-        }
-        return 0U;
+        return hold_last_encoder_angle();
     }
 
-    s_mc.encoder_raw = raw;
-    s_mc.encoder_elec = electrical_from_raw(raw, s_mc.command.elec_zero_trim);
-
-    if (s_mc.encoder_initialized == 0U)
+    if (encoder_raw_plausible(raw) == 0U)
     {
-        s_mc.encoder_prev_raw = raw;
-        s_mc.encoder_delta = 0;
-        s_mc.encoder_initialized = 1U;
+        return reject_bad_encoder_angle(raw);
     }
+
+    accept_encoder_angle(raw);
     return 1U;
 }
 
@@ -599,28 +663,9 @@ static uint8_t update_encoder_speed(void)
 
 #if (CTRL_SPD_FB_SOURCE == CTRL_SPD_FB_SOURCE_MA600)
     int32_t speed_ma600;
-
-    if (bsp_update_angle_speed_fast() == 0U)
-    {
-        s_mc.encoder_ok = 0U;
-        s_mc.encoder_age = bsp_angle_age();
-        return 0U;
-    }
-
-    raw = s_mc.encoder_raw;
-    s_mc.encoder_ok = (uint8_t)(bsp_angle_ok() != 0U);
-    s_mc.encoder_age = bsp_angle_age();
-    s_mc.encoder_raw = bsp_angle_raw();
-    raw = s_mc.encoder_raw;
-    s_mc.encoder_elec = electrical_from_raw(raw, s_mc.command.elec_zero_trim);
-#else
-    if (update_encoder_angle() == 0U)
-    {
-        return 0U;
-    }
-    raw = s_mc.encoder_raw;
 #endif
 
+    raw = s_mc.encoder_raw;
     if (s_mc.encoder_initialized == 0U)
     {
         s_mc.encoder_prev_raw = raw;
@@ -928,9 +973,12 @@ static void run_vf_fast_loop(void)
     if (++s_mc.speed_sample_div >= MC_SPEED_SAMPLE_DIV)
     {
         s_mc.speed_sample_div = 0U;
-        (void)update_encoder_speed();
+        if (update_encoder_angle() != 0U)
+        {
+            (void)update_encoder_speed();
+        }
     }
-    apply_voltage_vector(s_mc.command.vf_voltage, 0, theta);
+    apply_voltage_vector(0,s_mc.command.vf_voltage,  theta);
     s_mc.fast_loop_count++;
 }
 
@@ -956,6 +1004,15 @@ static void run_encoder_voltage_fast_loop(void)
     }
     s_mc.current_loop_div = 0U;
 
+    if (update_encoder_angle() == 0U)
+    {
+        s_mc.state = MC_STATE_FAULT;
+        s_mc.fault = MC_FAULT_ENCODER;
+        enter_safe_state();
+
+        return;
+    }
+
     if (++s_mc.speed_sample_div >= MC_SPEED_SAMPLE_DIV)
     {
         s_mc.speed_sample_div = 0U;
@@ -966,13 +1023,6 @@ static void run_encoder_voltage_fast_loop(void)
             enter_safe_state();
             return;
         }
-    }
-    else if (update_encoder_angle() == 0U)
-    {
-        s_mc.state = MC_STATE_FAULT;
-        s_mc.fault = MC_FAULT_ENCODER;
-        enter_safe_state();
-        return;
     }
 
     s_mc.id_ref_active = s_mc.command.id_ref;
@@ -1103,6 +1153,10 @@ static void fill_watch(MotorControlWatch_t* out)
     out->encoder_pos = s_mc.encoder_pos;
     out->encoder_age = s_mc.encoder_age;
     out->encoder_ok = s_mc.encoder_ok;
+    out->encoder_raw_step = s_mc.encoder_raw_step;
+    out->encoder_reject_step = s_mc.encoder_reject_step;
+    out->encoder_reject_raw = s_mc.encoder_reject_raw;
+    out->encoder_reject_count = s_mc.encoder_reject_count;
     out->align_done = s_mc.align_done;
     out->align_ticks = s_mc.align_ticks;
     out->align_theta = (uint16_t)MOT_ALIGN_THETA;
@@ -1175,6 +1229,10 @@ static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
     dst->encoder_pos = src->encoder_pos;
     dst->encoder_age = src->encoder_age;
     dst->encoder_ok = src->encoder_ok;
+    dst->encoder_raw_step = src->encoder_raw_step;
+    dst->encoder_reject_step = src->encoder_reject_step;
+    dst->encoder_reject_raw = src->encoder_reject_raw;
+    dst->encoder_reject_count = src->encoder_reject_count;
     dst->align_done = src->align_done;
     dst->align_ticks = src->align_ticks;
     dst->align_theta = src->align_theta;
