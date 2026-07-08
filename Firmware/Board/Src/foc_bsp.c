@@ -14,35 +14,39 @@
 
 static void clock_init(void);
 static void gpio_init(void);
-static void encoder_init(void);
 
 
+/** @brief 按安全顺序初始化板级 FOC 外设。 */
 void bsp_init(void)
 {
     clock_init();
     gpio_init();
-    encoder_init();
+    ma600_init();
     bsp_update_angle();
     curr_init();
     pwm_init();
     curr_calib(BOARD_CURRENT_OFFSET_SAMPLES);
 }
 
+/** @brief 在控制层初始化完成后启动 PWM/ADC 同步采样。 */
 void bsp_start_adc_sync(void)
 {
     curr_sync_init();
 }
 
+/** @brief ADC IRQ 中转入口，返回是否得到有效电流样本。 */
 uint8_t bsp_adc_irq(void)
 {
     return curr_irq();
 }
 
+/** @brief 普通路径更新一次 MA600 角度缓存。 */
 uint8_t bsp_update_angle(void)
 {
     return ma600_update();
 }
 
+/** @brief 快环路径更新 MA600 角度缓存，按配置选择 16-bit 或 32-bit 帧。 */
 uint8_t bsp_update_angle_fast(void)
 {
 #if (MOT_ENCODER_FAST_READ_SPEED_FRAME != 0U)
@@ -52,36 +56,43 @@ uint8_t bsp_update_angle_fast(void)
 #endif
 }
 
+/** @brief 强制使用 32-bit angle+speed 帧更新 MA600 缓存。 */
 uint8_t bsp_update_angle_speed_fast(void)
 {
     return ma600_update_speed_fast();
 }
 
+/** @brief 获取最近缓存的 MA600 raw。 */
 uint16_t bsp_angle_raw(void)
 {
     return ma600_raw();
 }
 
+/** @brief 获取最近缓存的 MA600 speed raw。 */
 int16_t bsp_angle_speed_raw(void)
 {
     return ma600_speed_raw();
 }
 
+/** @brief 获取 MA600 缓存有效标志。 */
 uint8_t bsp_angle_ok(void)
 {
     return ma600_ok();
 }
 
+/** @brief 获取 MA600 缓存年龄。 */
 uint8_t bsp_angle_age(void)
 {
     return ma600_age();
 }
 
+/** @brief 直接同步读取一次 MA600 raw。 */
 uint16_t bsp_read_angle(void)
 {
     return ma600_read_angle();
 }
 
+/** @brief 主循环低速维护入口，当前处理 MA600 在线调参。 */
 void bsp_service_slow(void)
 {
     ma600_diag_service();
@@ -108,12 +119,4 @@ static void gpio_init(void)
     GPIO_Init(PORT1, PIN6, OUTPUT);
     GPIO_PinAFInConfig(P16CFG, IO_OUTCFG_P16_GPIO);
     PORT_ClrBit(PORT1, PIN6);
-}
-
-/**
- * @brief 初始化 MA600 SPI 接口。
- */
-static void encoder_init(void)
-{
-    ma600_init();
 }

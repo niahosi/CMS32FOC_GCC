@@ -8,6 +8,7 @@
 #define MC_ALIGN_STAGE_REV_SAMPLE 4U
 #define MC_ALIGN_STAGE_DONE 5U
 
+/** @brief 诊断模式私有状态，避免 VF/Align 变量污染 Current/Speed 主线。 */
 typedef struct
 {
     uint32_t open_loop_ticks;
@@ -44,6 +45,7 @@ static void count_align_halfcycle(uint16_t theta);
 static void sample_align_trim(uint16_t raw, uint16_t theta);
 static void finish_align_scan(void);
 
+/** @brief 初始化 VF/Align/EncoderVoltage 诊断状态。 */
 void MotorControlDiag_Init(void)
 {
     s_diag.open_loop_timeout_ticks = (uint32_t)OL_TIMEOUT_MS * 2U;
@@ -51,6 +53,7 @@ void MotorControlDiag_Init(void)
     s_diag.open_loop_reset_count = 0U;
 }
 
+/** @brief 显式模式切换时重置对应诊断状态。 */
 void MotorControlDiag_ResetForMode(uint8_t mode)
 {
     if (mode == MC_MODE_VF_OPEN_LOOP)
@@ -68,6 +71,7 @@ void MotorControlDiag_ResetForMode(uint8_t mode)
     }
 }
 
+/** @brief 根据当前诊断 mode 分发到 VF、Align 或 EncoderVoltage 快环。 */
 void MotorControlDiag_RunFastLoop(MotorControlCState* mc)
 {
     if (mc->mode == MC_MODE_VF_OPEN_LOOP)
@@ -84,6 +88,7 @@ void MotorControlDiag_RunFastLoop(MotorControlCState* mc)
     }
 }
 
+/** @brief 汇总诊断私有状态和主控制基础状态到诊断 watch。 */
 void MotorControlDiag_FillWatch(const MotorControlCState* mc, MotorControlDiagWatch_t* out)
 {
     out->open_loop_reset_count = s_diag.open_loop_reset_count;
@@ -127,6 +132,7 @@ void MotorControlDiag_FillWatch(const MotorControlCState* mc, MotorControlDiagWa
     out->command_speed_ki = mc->command.speed_ki;
 }
 
+/** @brief 重置 VF 开环角并递增 reset 计数。 */
 static void reset_open_loop_theta(void)
 {
     s_diag.open_loop_ticks = 0U;
@@ -135,6 +141,7 @@ static void reset_open_loop_theta(void)
     s_diag.open_loop_reset_count++;
 }
 
+/** @brief 重置 Align 扫描状态，同时清空开环角累计。 */
 static void reset_align_state(void)
 {
     s_diag.align_ticks = 0U;
@@ -154,6 +161,7 @@ static void reset_align_state(void)
     s_diag.open_loop_theta_acc = 0;
 }
 
+/** @brief 按命令 open_loop_speed_ref 推进 VF 开环角。 */
 static uint16_t update_open_loop_theta(const MotorControlCommand_t* command)
 {
     int32_t step = (command->open_loop_speed_ref * (int32_t)OL_SPEED_TO_THETA_STEP +
@@ -166,6 +174,7 @@ static uint16_t update_open_loop_theta(const MotorControlCommand_t* command)
     return (uint16_t)((int32_t)s_diag.open_loop_theta * (int32_t)MOT_SENSOR_DIR);
 }
 
+/** @brief VF 诊断快环：生成开环角并输出 q 轴电压，同时观测编码器速度。 */
 static void run_vf_fast_loop(MotorControlCState* mc)
 {
     uint16_t theta;
@@ -204,6 +213,7 @@ static void run_vf_fast_loop(MotorControlCState* mc)
     mc->fast_loop_count++;
 }
 
+/** @brief Align 诊断快环：往返扫描电角度并采样零位 trim。 */
 static void run_align_fast_loop(MotorControlCState* mc)
 {
     int32_t speed = 0;
@@ -303,6 +313,7 @@ static void run_align_fast_loop(MotorControlCState* mc)
     mc->fast_loop_count++;
 }
 
+/** @brief EncoderVoltage 诊断快环：使用编码器角度直接输出命令电压矢量。 */
 static void run_encoder_voltage_fast_loop(MotorControlCState* mc)
 {
     FocAlphaBeta_t current_ab;
@@ -355,6 +366,7 @@ static void run_encoder_voltage_fast_loop(MotorControlCState* mc)
     mc->fast_loop_count++;
 }
 
+/** @brief 切换 Align 阶段并重置半周期计数基准。 */
 static void set_align_stage(uint8_t stage)
 {
     s_diag.align_stage = stage;
@@ -363,6 +375,7 @@ static void set_align_stage(uint8_t stage)
         (int16_t)((int32_t)s_diag.open_loop_theta * (int32_t)MOT_SENSOR_DIR);
 }
 
+/** @brief 按指定开环速度推进 Align 扫描角。 */
 static uint16_t update_align_theta(int32_t speed)
 {
     int32_t step;
@@ -385,6 +398,7 @@ static uint16_t update_align_theta(int32_t speed)
     return (uint16_t)((int32_t)s_diag.open_loop_theta * (int32_t)MOT_SENSOR_DIR);
 }
 
+/** @brief 根据 raw 和目标电角度反推临时零位 trim。 */
 static int16_t align_trim_from_raw(uint16_t raw, uint16_t target_theta)
 {
     int32_t trim;
@@ -399,6 +413,7 @@ static int16_t align_trim_from_raw(uint16_t raw, uint16_t target_theta)
     return (int16_t)trim;
 }
 
+/** @brief 统计 Align 扫描角跨越符号的半周期次数。 */
 static void count_align_halfcycle(uint16_t theta)
 {
     const int16_t theta_now = (int16_t)theta;
@@ -414,6 +429,7 @@ static void count_align_halfcycle(uint16_t theta)
     s_diag.align_theta_prev = theta_now;
 }
 
+/** @brief 采样 Align trim，并以首样本为基准累计差值。 */
 static void sample_align_trim(uint16_t raw, uint16_t theta)
 {
     const int16_t trim = align_trim_from_raw(raw, theta);
@@ -436,6 +452,7 @@ static void sample_align_trim(uint16_t raw, uint16_t theta)
     }
 }
 
+/** @brief 结束 Align 扫描，计算平均 trim 并进入完成阶段。 */
 static void finish_align_scan(void)
 {
     int32_t average = s_diag.align_first_delta;

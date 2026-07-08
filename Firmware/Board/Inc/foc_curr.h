@@ -14,10 +14,16 @@ void curr_init(void);
 /** @brief 执行一次软件触发三相原始 ADC 采样。 */
 void curr_sample_raw(void);
 
-/** @brief 在 PWM 关闭状态下采集静态电流零漂。 */
+/**
+ * @brief 在 PWM 关闭状态下采集静态电流零漂。
+ * @param samples 每相平均采样次数。
+ */
 void curr_calib(uint16_t samples);
 
-/** @brief 在 PWM 运行配置下重新采集电流零漂。 */
+/**
+ * @brief 在 PWM 运行配置下重新采集电流零漂。
+ * @param samples 每相平均采样次数。
+ */
 void curr_calib_pwm(uint16_t samples);
 
 /** @brief 根据最新 raw ADC 值更新三相电流缓存。 */
@@ -29,10 +35,16 @@ void curr_sync_init(void);
 /** @brief PWM duty 更新后刷新下一拍采样窗口和触发点。 */
 void curr_sync_timing(void);
 
-/** @brief 传入当前 VF 电压命令，用于高调制区切换采样策略。 */
+/**
+ * @brief 传入当前 VF 电压命令，用于高调制区切换采样策略。
+ * @param vf_voltage VF q 轴电压命令，SVPWM count 单位。
+ */
 void curr_set_vf_voltage(int16_t vf_voltage);
 
-/** @brief ADC 中断采样入口。 */
+/**
+ * @brief ADC 中断采样入口。
+ * @return 1 表示双点采样已解析出有效三相电流，0 表示仍在等待或样本无效。
+ */
 uint8_t curr_irq(void);
 
 /** @brief 获取逻辑 U/V/W 三相电流 count。 */
@@ -52,5 +64,5 @@ uint16_t curr_raw_adc_u(void);
 uint16_t curr_raw_adc_v(void);
 uint16_t curr_raw_adc_w(void);
 
-/** @brief 获取 PWM/ADC 同步采样计数。 */
+/** @brief 获取 PWM/ADC 同步采样计数；每次有效解析后递增。 */
 uint32_t curr_sync_count(void);

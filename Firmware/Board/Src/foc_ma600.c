@@ -24,6 +24,7 @@
 #define MA600_MAX_AGE 255u
 #define MA600_INIT_RETRY 3u
 
+/** @brief MA600 最近一次角度/speed 读取缓存。 */
 typedef struct
 {
     volatile uint16_t raw;
@@ -51,6 +52,7 @@ static void cache_fail(void);
 volatile uint32_t g_ma600_rx_drain_count;
 volatile uint8_t g_ma600_rx_drain_last;
 
+/** @brief 初始化 MA600 SPI、默认补偿寄存器和 MTSP 输出模式。 */
 void ma600_init(void)
 {
     uint8_t retry;
@@ -79,6 +81,7 @@ void ma600_init(void)
     }
 }
 
+/** @brief 拉低 CS 前清空残留 RX FIFO，开始一帧 SPI 事务。 */
 static void cs_low(void)
 {
     /* MA600 的 CS 为低有效，拉低后开始一帧 SPI 事务。 */
@@ -86,12 +89,14 @@ static void cs_low(void)
     SSP_MasterClearCS();
 }
 
+/** @brief 拉高 CS，结束当前 SPI 事务。 */
 static void cs_high(void)
 {
     /* 拉高 CS 结束本次事务，MA600 在后续帧返回对应数据。 */
     SSP_MasterSetCS();
 }
 
+/** @brief 清空 SSP RX FIFO 中残留字节，并记录诊断计数。 */
 static void drain_rx_fifo(void)
 {
     uint8_t drained = 0U;
@@ -113,6 +118,7 @@ static void drain_rx_fifo(void)
     }
 }
 
+/** @brief 阻塞式传输一个 8-bit SPI 字节，带较长超时。 */
 static uint32_t xfer(uint32_t tx)
 {
     uint32_t timeout = MA600_TIMEOUT;
@@ -141,6 +147,7 @@ static uint32_t xfer(uint32_t tx)
     return SSP_GetData();
 }
 
+/** @brief 按 MA600 unlock/key/addr/dummy 时序写一个 RAM 寄存器。 */
 void ma600_write_reg(uint32_t addr, uint32_t buf)
 {
     /*
@@ -169,6 +176,7 @@ void ma600_write_reg(uint32_t addr, uint32_t buf)
     cs_high();
 }
 
+/** @brief 兼容旧接口的连续角度读取；addr 当前不参与协议。 */
 uint32_t ma600_read_data(uint32_t addr)
 {
     uint32_t data;
@@ -184,6 +192,7 @@ uint32_t ma600_read_data(uint32_t addr)
     return data;
 }
 
+/** @brief 按 MA600 两帧 read 命令读取 SFR/RAM 寄存器。 */
 uint32_t ma600_read_reg(uint32_t cmd)
 {
     uint32_t data;
@@ -203,6 +212,7 @@ uint32_t ma600_read_reg(uint32_t cmd)
     return data;
 }
 
+/** @brief 按 MA600 store key 特殊帧序列触发 NVM block 存储。 */
 void ma600_store_nvm_block(uint8_t block)
 {
     cs_low();
@@ -227,6 +237,7 @@ void ma600_store_nvm_block(uint8_t block)
     m0_delay_us(10000);
 }
 
+/** @brief 直接读取一次 16-bit 连续角度，不更新缓存状态。 */
 uint16_t ma600_read_angle(void)
 {
     uint8_t high;
@@ -241,13 +252,14 @@ uint16_t ma600_read_angle(void)
     return ((uint16_t)high << 8) | low;
 }
 
+/** @brief 普通路径读取 16-bit 角度并更新缓存，调参 busy 时拒绝读取。 */
 uint8_t ma600_update(void)
 {
     uint8_t high = 0u;
     uint8_t low = 0u;
     uint8_t ok;
 
-    if (ma600_config_busy() != 0U)
+    if (ma600_diag_busy() != 0U)
     {
         return 0U;
     }
@@ -272,13 +284,14 @@ uint8_t ma600_update(void)
     return ok;
 }
 
+/** @brief ADC 快环短超时读取 16-bit 角度并更新缓存。 */
 uint8_t ma600_update_fast(void)
 {
     uint8_t high = 0u;
     uint8_t low = 0u;
     uint32_t timeout;
 
-    if (ma600_config_busy() != 0U)
+    if (ma600_diag_busy() != 0U)
     {
         return 0U;
     }
@@ -352,13 +365,14 @@ uint8_t ma600_update_fast(void)
     return 1u;
 }
 
+/** @brief ADC 快环短超时读取 32-bit angle+speed 帧并更新缓存。 */
 uint8_t ma600_update_speed_fast(void)
 {
     uint8_t rx[4] = {0u, 0u, 0u, 0u};
     uint32_t timeout;
     uint8_t i;
 
-    if (ma600_config_busy() != 0U)
+    if (ma600_diag_busy() != 0U)
     {
         return 0U;
     }
@@ -410,31 +424,31 @@ uint8_t ma600_update_speed_fast(void)
     return 1u;
 }
 
+/** @brief 返回最近缓存的 raw 角度。 */
 uint16_t ma600_raw(void)
 {
     return s_enc.raw;
 }
 
+/** @brief 返回最近缓存的 MA600 speed raw。 */
 int16_t ma600_speed_raw(void)
 {
     return s_enc.speed;
 }
 
+/** @brief 返回最近一次缓存更新是否成功。 */
 uint8_t ma600_ok(void)
 {
     return s_enc.ok;
 }
 
+/** @brief 返回角度缓存年龄。 */
 uint8_t ma600_age(void)
 {
     return s_enc.age;
 }
 
-uint8_t ma600_config_busy(void)
-{
-    return ma600_diag_busy();
-}
-
+/** @brief 配置 MA600 SPI 引脚和手动 CS 引脚。 */
 static void spi_pins_init(void)
 {
     /* P02=CS/CNS, P03=SCLK, P04=MISO, P05=MOSI，与原理图 MA600 接线一致。 */
@@ -452,6 +466,7 @@ static void spi_pins_init(void)
     GPIO_Init(PORT0, PIN2, OUTPUT);
 }
 
+/** @brief 配置 SSP 为 SPI mode 0、8-bit、手动 CS。 */
 static void spi_init(void)
 {
     CGC_PER12PeriphClockCmd(CGC_PER12Periph_SPI, ENABLE);
@@ -465,6 +480,7 @@ static void spi_init(void)
     SSP_MasterSetCS();
 }
 
+/** @brief 带超时传输一个 8-bit SPI 字节并返回成功标志。 */
 static uint8_t xfer8(uint8_t tx, uint8_t* rx)
 {
     uint32_t timeout = MA600_TIMEOUT;
@@ -493,6 +509,7 @@ static uint8_t xfer8(uint8_t tx, uint8_t* rx)
     return 1u;
 }
 
+/** @brief 等待 SSP 总线空闲，用于确保 CS 拉高前帧已完成。 */
 static uint8_t wait_idle(uint32_t timeout)
 {
     while (SSP_GetBusyFlag())
@@ -506,6 +523,7 @@ static uint8_t wait_idle(uint32_t timeout)
     return 1u;
 }
 
+/** @brief 标记 MA600 缓存失效并增加 age。 */
 static void cache_fail(void)
 {
     s_enc.ok = 0u;

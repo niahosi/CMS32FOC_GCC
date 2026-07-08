@@ -26,6 +26,7 @@
 #define CURR_RECON_ALL 1U
 #define CURR_RECON_FILTER 2U
 
+/** @brief 三相电流或 ADC 扣零后的物理相电流，单位 ADC count。 */
 typedef struct
 {
     int16_t u;
@@ -33,6 +34,7 @@ typedef struct
     int16_t w;
 } Curr3;
 
+/** @brief 当前采样 pair 对应的 ADC 通道和最后完成通道。 */
 typedef struct
 {
     uint32_t channel_mask;
@@ -40,6 +42,7 @@ typedef struct
     uint32_t last_channel_mask;
 } CurrPairCfg;
 
+/** @brief 未扣零漂的三相 ADC 原始码值。 */
 typedef struct
 {
     volatile uint16_t u;
@@ -47,6 +50,7 @@ typedef struct
     volatile uint16_t w;
 } CurrRawAdc;
 
+/** @brief 三相静态零漂。 */
 typedef struct
 {
     uint16_t u;
@@ -54,6 +58,7 @@ typedef struct
     uint16_t w;
 } CurrZero;
 
+/** @brief PWM/ADC 同步采样状态。 */
 typedef struct
 {
     volatile int16_t u;
@@ -62,6 +67,7 @@ typedef struct
     volatile int16_t sum;
 } CurrCache;
 
+/** @brief 当前 PWM 周期选出的采样窗口和触发点。 */
 typedef struct
 {
     volatile uint32_t count;
@@ -70,6 +76,7 @@ typedef struct
     uint32_t last_mask;
 } CurrSync;
 
+/** @brief 双点采样两次触发之间的差值诊断缓存。 */
 typedef struct
 {
     volatile uint8_t pair;
@@ -83,6 +90,7 @@ typedef struct
     volatile uint8_t single_point;
 } CurrWindow;
 
+/** @brief 一个 PWM 周期内 A/B 两次采样。 */
 typedef struct
 {
     volatile uint8_t stage;
@@ -92,12 +100,14 @@ typedef struct
     volatile int16_t b1;
 } CurrSampleDelta;
 
+/** @brief 无法重构全部三相时用于保持缺失相的低通缓存。 */
 typedef struct
 {
     Curr3 a;
     Curr3 b;
 } CurrPairSample;
 
+/** @brief duty 排序项，用于按 T1/T2/T3 选择采样窗口。 */
 typedef struct
 {
     int32_t u;
@@ -161,6 +171,7 @@ static uint16_t clamp_sample_tick(uint16_t tick);
 static uint16_t abs_diff_i16(int16_t a, int16_t b);
 static uint16_t cnt_to_adc(int16_t cnt, uint16_t offset);
 
+/** @brief 初始化电流采样硬件和内部缓存。 */
 void curr_init(void)
 {
     pins_init();
@@ -170,6 +181,7 @@ void curr_init(void)
     state_clear();
 }
 
+/** @brief 软件轮询读取一次三相原始 ADC。 */
 void curr_sample_raw(void)
 {
     s_raw.u = read_one(ADC_CH_0, ADC_CH_0_MSK);
@@ -177,6 +189,7 @@ void curr_sample_raw(void)
     s_raw.w = read_one(ADC_CH_3, ADC_CH_3_MSK);
 }
 
+/** @brief PWM 关闭时采集三相零漂平均值。 */
 void curr_calib(uint16_t samples)
 {
     uint32_t sum_u = 0;
@@ -196,6 +209,7 @@ void curr_calib(uint16_t samples)
     s_zero.w = (uint16_t)(sum_w / samples);
 }
 
+/** @brief 临时关闭 PWM 触发采样，用软件采样重新估计零漂。 */
 void curr_calib_pwm(uint16_t samples)
 {
     uint32_t sum_u = 0;
@@ -228,6 +242,7 @@ void curr_calib_pwm(uint16_t samples)
     ADC_Go();
 }
 
+/** @brief 将当前 raw ADC 扣零漂并刷新物理/逻辑电流缓存。 */
 void curr_update(void)
 {
     Curr3 physical;
@@ -238,6 +253,7 @@ void curr_update(void)
     apply_phys(&physical);
 }
 
+/** @brief 启动 PWM 触发 ADC 的连续同步采样。 */
 void curr_sync_init(void)
 {
     sync_reset();
@@ -250,6 +266,7 @@ void curr_sync_init(void)
     ADC_Go();
 }
 
+/** @brief PWM duty 更新后重新选择下一拍采样窗口。 */
 void curr_sync_timing(void)
 {
     if (s_sync.started == 0U)
@@ -260,6 +277,7 @@ void curr_sync_timing(void)
     trigger_update();
 }
 
+/** @brief 更新 VF 电压幅值，用于高调制区单点采样策略切换。 */
 void curr_set_vf_voltage(int16_t vf_voltage)
 {
     uint16_t abs_voltage;
@@ -288,6 +306,7 @@ void curr_set_vf_voltage(int16_t vf_voltage)
     }
 }
 
+/** @brief ADC IRQ 中解析单点或双点采样，成功后更新三相电流。 */
 uint8_t curr_irq(void)
 {
     if (ADC_GetChannelIntFlag(s_sync.last) == 0U)
@@ -341,6 +360,7 @@ uint16_t curr_raw_adc_v(void) { return s_raw.v; }
 uint16_t curr_raw_adc_w(void) { return s_raw.w; }
 uint32_t curr_sync_count(void) { return s_sync.count; }
 
+/** @brief 配置三相电流 ADC/PGA 相关引脚为模拟输入。 */
 static void pins_init(void)
 {
     GPIO_Init(PORT0, PIN0, ANALOG_INPUT);
@@ -352,6 +372,7 @@ static void pins_init(void)
     GPIO_Init(PORT2, PIN0, ANALOG_INPUT);
 }
 
+/** @brief 启动 ADC LDO 并选择输出电压。 */
 static void ldo_init(void)
 {
     CGC_PER13PeriphClockCmd(CGC_PER13Periph_ADCLDO, ENABLE);
@@ -359,6 +380,7 @@ static void ldo_init(void)
     ADCLDO_Enable();
 }
 
+/** @brief 配置三路差分 PGA、半电源参考和增益。 */
 static void pga_init(void)
 {
     CGC_PER13PeriphClockCmd(CGC_PER13Periph_PGA0EN, ENABLE);
@@ -386,6 +408,7 @@ static void pga_init(void)
     PGA_Start(PGA2x);
 }
 
+/** @brief 初始化 ADC 基本运行模式，默认先用于软件单次采样。 */
 static void adc_init(void)
 {
     CGC_PER13PeriphClockCmd(CGC_PER13Periph_ADCEN, ENABLE);
@@ -396,6 +419,7 @@ static void adc_init(void)
     ADC_Start();
 }
 
+/** @brief 软件触发读取单个 ADC 通道。 */
 static uint16_t read_one(uint32_t ch, uint32_t ch_msk)
 {
     ADC_DisableScanChannel(0xFFFFFFFFUL);
@@ -407,11 +431,13 @@ static uint16_t read_one(uint32_t ch, uint32_t ch_msk)
     return adc_result12(ch);
 }
 
+/** @brief 读取 ADC 结果并截取 12-bit 有效码值。 */
 static uint16_t adc_result12(uint32_t ch)
 {
     return (uint16_t)(ADC_GetResult(ch) & 0x0FFFU);
 }
 
+/** @brief 清除当前使用到的 ADC 通道中断和 NVIC pending。 */
 static void irq_clear(void)
 {
     ADC_ClearChannelIntFlag(ADC_CH_0);
@@ -420,6 +446,7 @@ static void irq_clear(void)
     NVIC_ClearPendingIRQ(ADC_IRQn);
 }
 
+/** @brief 重置同步采样状态，保留硬件配置由后续 trigger_update 设置。 */
 static void sync_reset(void)
 {
     s_sync.count = 0;
@@ -427,6 +454,7 @@ static void sync_reset(void)
     state_clear();
 }
 
+/** @brief 清空采样窗口、双点差值和滤波缓存。 */
 static void state_clear(void)
 {
     s_win.pair = CURR_PAIR_NONE;
@@ -448,11 +476,13 @@ static void state_clear(void)
     filter_clear();
 }
 
+/** @brief 重新选择采样窗口并配置 PWM/ADC 触发。 */
 static void trigger_update(void)
 {
     window_select();
 }
 
+/** @brief 按当前 pair 配置 ADC 扫描通道和 EPWM CMP 触发源。 */
 static void trigger_pair(uint8_t pair)
 {
     CurrPairCfg cfg;
@@ -494,6 +524,7 @@ static void trigger_pair(uint8_t pair)
     s_sync.last_mask = cfg.last_channel_mask;
 }
 
+/** @brief 判断 VF 高电压诊断时是否切到单点采样。 */
 static uint8_t high_vf_single_active(void)
 {
 #if ((CS_MULTI_EN != 0U) && (CS_HIGH_VF_SINGLE_EN != 0U))
@@ -503,6 +534,7 @@ static uint8_t high_vf_single_active(void)
 #endif
 }
 
+/** @brief 将逻辑采样 pair 映射到 ADC 通道掩码。 */
 static uint8_t pair_cfg(uint8_t pair, CurrPairCfg* cfg)
 {
     if (cfg == 0)
@@ -539,6 +571,7 @@ static uint8_t pair_cfg(uint8_t pair, CurrPairCfg* cfg)
     }
 }
 
+/** @brief 根据当前 duty 选择有效采样窗口；无窗口时保持上一配置。 */
 static void window_select(void)
 {
     uint8_t pair;
@@ -558,6 +591,7 @@ static void window_select(void)
     window_apply_pair(pair, common_width, (int16_t)center);
 }
 
+/** @brief 按 T1/T2/T3 窗口宽度选择可采样 pair 和重构模式。 */
 static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width,
                                 uint8_t* valid_mask, uint8_t* recon_mode)
 {
@@ -646,6 +680,7 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
     return 0U;
 }
 
+/** @brief 将三相 duty 从大到小排序，用于计算 T1/T2/T3。 */
 static void sort_duty_desc(CurrDutyItem* a, CurrDutyItem* b, CurrDutyItem* c)
 {
     CurrDutyItem t;
@@ -670,6 +705,7 @@ static void sort_duty_desc(CurrDutyItem* a, CurrDutyItem* b, CurrDutyItem* c)
     }
 }
 
+/** @brief 将两相物理相编号转换为采样 pair 编号。 */
 static uint8_t pair_from_phases(uint8_t a, uint8_t b)
 {
     if (((a == CURR_PHASE_U) && (b == CURR_PHASE_V)) ||
@@ -690,6 +726,7 @@ static uint8_t pair_from_phases(uint8_t a, uint8_t b)
     return CURR_PAIR_NONE;
 }
 
+/** @brief 返回某一相在 valid_mask 中的 bit。 */
 static uint8_t valid_bit(uint8_t phase)
 {
     switch (phase)
@@ -708,6 +745,7 @@ static uint8_t valid_bit(uint8_t phase)
     }
 }
 
+/** @brief 应用采样 pair 和中心点，必要时重配 PWM/ADC 触发。 */
 static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t center_bias)
 {
     uint16_t center;
@@ -776,6 +814,7 @@ static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t cente
     trigger_pair(pair);
 }
 
+/** @brief 没有足够采样窗口时保持上一 pair，首次进入时配置保底 pair。 */
 static void window_hold(void)
 {
     s_win.hold = 1U;
@@ -791,6 +830,7 @@ static void window_hold(void)
     }
 }
 
+/** @brief 按当前 pair 从 ADC 结果中取样并扣除零漂。 */
 static void sample_pair(Curr3* sample)
 {
     int16_t first = 0;
@@ -845,6 +885,7 @@ static void sample_pair(Curr3* sample)
     }
 }
 
+/** @brief 解析单点/双点样本，完成范围检查、重构、滤波和缓存更新。 */
 static void sample_resolve(void)
 {
     Curr3 avg;
@@ -897,6 +938,7 @@ static void sample_resolve(void)
     apply_phys(&physical);
 }
 
+/** @brief 检查当前 pair 的已采样相是否在硬限范围内。 */
 static uint8_t pair_sample_in_range(uint8_t pair, const Curr3* sample)
 {
     if (s_win.recon_mode == CURR_RECON_FILTER)
@@ -939,6 +981,7 @@ static uint8_t pair_sample_in_range(uint8_t pair, const Curr3* sample)
     }
 }
 
+/** @brief 检查重构后的三相物理电流是否在硬限范围内。 */
 static uint8_t physical_in_hard_range(const Curr3* physical)
 {
     return (uint8_t)(current_in_hard_range(physical->u) &&
@@ -946,12 +989,14 @@ static uint8_t physical_in_hard_range(const Curr3* physical)
                      current_in_hard_range(physical->w));
 }
 
+/** @brief 检查单相电流 count 是否在采样硬限内。 */
 static uint8_t current_in_hard_range(int16_t value)
 {
     return (uint8_t)((value > (int16_t)-CS_SAMPLE_ABS_HARD_LIMIT_CNT) &&
                      (value < (int16_t)CS_SAMPLE_ABS_HARD_LIMIT_CNT));
 }
 
+/** @brief 根据采样 pair 用 KCL 或滤波保持重构三相物理电流。 */
 static void reconstruct(uint8_t pair, const Curr3* sample, Curr3* physical)
 {
     physical->u = sample->u;
@@ -997,6 +1042,7 @@ static void reconstruct(uint8_t pair, const Curr3* sample, Curr3* physical)
     }
 }
 
+/** @brief 写入物理电流缓存，并同步更新 raw 观察值和逻辑相序。 */
 static void apply_phys(const Curr3* physical)
 {
     s_phys.u = physical->u;
@@ -1011,6 +1057,7 @@ static void apply_phys(const Curr3* physical)
     map_logic(physical);
 }
 
+/** @brief 按 TuneConfig 中相序/符号把物理相映射为控制逻辑 U/V/W。 */
 static void map_logic(const Curr3* physical)
 {
 #if (MOT_CURR_PHASE_MAP == MOT_PHASE_MAP_UWV)
@@ -1041,6 +1088,7 @@ static void map_logic(const Curr3* physical)
     s_logic.sum = (int16_t)((int32_t)s_logic.u + (int32_t)s_logic.v + (int32_t)s_logic.w);
 }
 
+/** @brief 按 MOT_CURR_SIGN 统一电流方向。 */
 static int16_t map_current_sign(int16_t value)
 {
 #if (MOT_CURR_SIGN < 0)
@@ -1050,6 +1098,7 @@ static int16_t map_current_sign(int16_t value)
 #endif
 }
 
+/** @brief 清空缺失相保持滤波器。 */
 static void filter_clear(void)
 {
     s_filter.u = 0;
@@ -1058,6 +1107,7 @@ static void filter_clear(void)
     s_filter.seeded = 0U;
 }
 
+/** @brief 用有效采样相更新缺失相保持滤波器。 */
 static void filter_update(const Curr3* physical, uint8_t valid_mask)
 {
     if (s_filter.seeded == 0U)
@@ -1083,6 +1133,7 @@ static void filter_update(const Curr3* physical, uint8_t valid_mask)
     }
 }
 
+/** @brief 将滤波器内部 int32 值夹紧为 int16 电流。 */
 static int16_t filter_value(int32_t value)
 {
     if (s_filter.seeded == 0U)
@@ -1100,6 +1151,7 @@ static int16_t filter_value(int32_t value)
     return (int16_t)value;
 }
 
+/** @brief 将 PWM tick 限制到周期范围内。 */
 static uint16_t clamp_tick(uint16_t tick)
 {
     if (tick > PWM_PERIOD)
@@ -1109,6 +1161,7 @@ static uint16_t clamp_tick(uint16_t tick)
     return tick;
 }
 
+/** @brief 将采样 tick 限制到避开死区的安全范围。 */
 static uint16_t clamp_sample_tick(uint16_t tick)
 {
     const uint16_t max_tick = (PWM_PERIOD > PWM_DEADTIME_TICKS)
@@ -1127,6 +1180,7 @@ static uint16_t clamp_sample_tick(uint16_t tick)
     return tick;
 }
 
+/** @brief 计算两个 int16 的绝对差，饱和到 uint16。 */
 static uint16_t abs_diff_i16(int16_t a, int16_t b)
 {
     int32_t diff = (int32_t)a - (int32_t)b;
@@ -1142,6 +1196,7 @@ static uint16_t abs_diff_i16(int16_t a, int16_t b)
     return (uint16_t)diff;
 }
 
+/** @brief 将扣零漂后的 count 还原为 12-bit ADC 观察值。 */
 static uint16_t cnt_to_adc(int16_t cnt, uint16_t offset)
 {
     int32_t adc = (int32_t)cnt + (int32_t)offset;

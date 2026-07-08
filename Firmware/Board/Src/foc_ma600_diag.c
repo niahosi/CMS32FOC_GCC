@@ -48,6 +48,7 @@ static uint8_t apply_corr_table(void);
 static uint8_t store_nvm_block(uint8_t block);
 static uint8_t write_verify_reg(uint8_t addr, uint8_t value);
 
+/** @brief 上电后按编译配置写入或回读 MA600 侧轴补偿寄存器。 */
 void ma600_diag_init_defaults(void)
 {
 #if (MOT_ENCODER_SIDE_BCT_EN != 0U)
@@ -64,6 +65,7 @@ void ma600_diag_init_defaults(void)
 #endif
 }
 
+/** @brief 轮询 Ozone 命令变量，串行执行 MA600 诊断写操作。 */
 void ma600_diag_service(void)
 {
     uint8_t bct;
@@ -112,11 +114,13 @@ void ma600_diag_service(void)
     }
 }
 
+/** @brief 返回诊断写寄存器 busy 标志，供普通读角路径避让。 */
 uint8_t ma600_diag_busy(void)
 {
     return g_ma600_cfg_busy;
 }
 
+/** @brief 写入 BCT 和 ET 侧轴补偿寄存器，并回读确认。 */
 static uint8_t apply_side_bct(uint8_t bct, uint8_t etx, uint8_t ety)
 {
     const uint8_t et =
@@ -144,6 +148,7 @@ static uint8_t apply_side_bct(uint8_t bct, uint8_t etx, uint8_t ety)
                       g_ma600_et_write));
 }
 
+/** @brief 写入单个 CORR 表点并回读确认。 */
 static uint8_t apply_corr_point(uint8_t index, uint8_t value)
 {
     if (index >= MA600_DIAG_CORR_COUNT)
@@ -174,6 +179,7 @@ static uint8_t apply_corr_point(uint8_t index, uint8_t value)
     return (uint8_t)(g_ma600_corr_last_read == value);
 }
 
+/** @brief 顺序写入 32 点 CORR 表，记录首个失败点。 */
 static uint8_t apply_corr_table(void)
 {
     uint8_t i;
@@ -197,6 +203,10 @@ static uint8_t apply_corr_table(void)
     return 1U;
 }
 
+/**
+ * @brief 触发 MA600 NVM block 存储并检查 status。
+ * @warning 只应在停机、RAM 配置确认有效后手动触发。
+ */
 static uint8_t store_nvm_block(uint8_t block)
 {
     if (block > 1U)
@@ -210,6 +220,7 @@ static uint8_t store_nvm_block(uint8_t block)
     return (uint8_t)((g_ma600_nvm_status & MA600_STATUS_ERROR_MASK) == 0U);
 }
 
+/** @brief 对单个寄存器执行写入-延时-回读，失败时重试。 */
 static uint8_t write_verify_reg(uint8_t addr, uint8_t value)
 {
     uint8_t retry;

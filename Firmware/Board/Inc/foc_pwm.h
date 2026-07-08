@@ -11,13 +11,18 @@
 /** @brief 初始化三相互补 PWM，并保持功率输出关闭。 */
 void pwm_init(void);
 
-/** @brief 设置三相 PWM 占空比计数。 */
+/**
+ * @brief 设置三相 PWM 占空比计数。
+ * @param u U 相 duty count。
+ * @param v V 相 duty count。
+ * @param w W 相 duty count。
+ */
 void pwm_set_duty(uint16_t u, uint16_t v, uint16_t w);
 
-/** @brief 设置单点 ADC 触发 tick。 */
+/** @brief 设置单点 ADC 触发 tick，单位为 PWM 计数。 */
 void pwm_set_adc_trigger(uint16_t tick);
 
-/** @brief 设置双点 ADC 触发 tick。 */
+/** @brief 设置双点 ADC 触发 tick，单位为 PWM 计数。 */
 void pwm_set_adc_triggers(uint16_t a, uint16_t b);
 
 /** @brief 获取 ADC 触发中心 tick。 */
@@ -32,7 +37,10 @@ uint16_t pwm_adc_trigger_b(void);
 /** @brief 强制关闭功率级输出。 */
 void pwm_off(void);
 
-/** @brief 设置功率级输出使能，返回实际输出状态。 */
+/**
+ * @brief 设置功率级输出使能，返回实际输出状态。
+ * @return 1 表示允许输出，0 表示保持安全关闭。
+ */
 uint8_t pwm_enable(uint8_t en);
 
 /** @brief 判断 PWM 是否处于安全关闭状态。 */
@@ -40,9 +48,6 @@ uint8_t pwm_is_off_safe(void);
 
 /** @brief 判断 PWM 是否处于运行输出状态。 */
 uint8_t pwm_is_running(void);
-
-/** @brief 判断 PWM 当前是否安全。 */
-uint8_t pwm_is_safe(void);
 
 /**
  * @brief 获取 PWM 调试快照。

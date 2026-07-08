@@ -19,13 +19,11 @@ static int16_t clamp_ref(int16_t value, int16_t limit);
 static int16_t abs_limit(int16_t value, int16_t limit);
 static int32_t clamp_s32_local(int32_t value, int32_t limit);
 static int32_t rpm_to_speed_counts(int16_t rpm);
-static int16_t speed_counts_to_rpm(int32_t speed);
 #if (CTRL_SPD_FB_SOURCE == CTRL_SPD_FB_SOURCE_MA600)
 static int32_t ma600_speed_to_counts(int16_t speed_raw);
 static int32_t rpm_to_speed_counts_s32(int32_t rpm);
 #endif
 static int16_t slew_s16(int16_t current, int16_t target, int16_t step);
-static uint8_t current_ok(void);
 static uint8_t current_ok_state(const MotorControlCState* mc);
 static uint16_t electrical_from_raw(uint16_t raw, int16_t trim);
 static int16_t encoder_raw_delta(MotorControlCState* mc, uint16_t raw);
@@ -43,12 +41,12 @@ static uint8_t update_encoder_speed_state(MotorControlCState* mc);
 static void update_speed_loop(void);
 static void run_current_fast_loop(uint8_t speed_mode);
 static void fill_watch(MotorControlWatch_t* out);
-static void fill_diag_watch(MotorControlDiagWatch_t* out);
 static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
                                    const MotorControlWatch_t* src);
 static void copy_diag_watch_to_volatile(volatile MotorControlDiagWatch_t* dst,
                                         const MotorControlDiagWatch_t* src);
 
+/** @brief 初始化控制层全局状态、PI 控制器和 PWM 安全态。 */
 void MotorControl_Init(void)
 {
     s_mc.state = MC_STATE_IDLE;
@@ -82,6 +80,7 @@ void MotorControl_Init(void)
     pwm_off();
 }
 
+/** @brief 主循环复制 Ozone 命令并完成限幅、模式切换和诊断 reset。 */
 void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
 {
     if (command == 0)
@@ -158,6 +157,7 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
     }
 }
 
+/** @brief 主循环慢环，执行板级维护、安全检查和状态机更新。 */
 void MotorControl_RunSlowLoop(void)
 {
     bsp_service_slow();
@@ -165,7 +165,7 @@ void MotorControl_RunSlowLoop(void)
     s_mc.current.u = curr_u();
     s_mc.current.v = curr_v();
     s_mc.current.w = curr_w();
-    s_mc.check.current_ok = current_ok();
+    s_mc.check.current_ok = current_ok_state(&s_mc);
     s_mc.check.pwm_off_safe = (pwm_is_off_safe() != 0U) ? 1U : 0U;
     s_mc.check.ma600_ok = 0U;
     s_mc.check.ready_closed_loop = 0U;
@@ -222,6 +222,7 @@ void MotorControl_RunSlowLoop(void)
     s_mc.slow_loop_count++;
 }
 
+/** @brief ADC IRQ 快环入口，按控制模式运行 Current/Speed 或诊断快环。 */
 uint8_t MotorControl_FastLoopFromAdcIrq(void)
 {
     const uint8_t sample_ready = bsp_adc_irq();
@@ -249,6 +250,7 @@ uint8_t MotorControl_FastLoopFromAdcIrq(void)
     return 1U;
 }
 
+/** @brief 复制当前主线 watch 到普通内存。 */
 void MotorControl_GetWatch(MotorControlWatch_t* out)
 {
     if (out == 0)
@@ -258,6 +260,7 @@ void MotorControl_GetWatch(MotorControlWatch_t* out)
     fill_watch(out);
 }
 
+/** @brief 复制当前主线 watch 到 volatile Ozone 观察变量。 */
 void MotorControl_UpdateWatch(volatile MotorControlWatch_t* out)
 {
     MotorControlWatch_t snapshot;
@@ -271,15 +274,17 @@ void MotorControl_UpdateWatch(volatile MotorControlWatch_t* out)
     copy_watch_to_volatile(out, &snapshot);
 }
 
+/** @brief 复制当前诊断 watch 到普通内存。 */
 void MotorControl_GetDiagWatch(MotorControlDiagWatch_t* out)
 {
     if (out == 0)
     {
         return;
     }
-    fill_diag_watch(out);
+    MotorControlDiag_FillWatch(&s_mc, out);
 }
 
+/** @brief 复制当前诊断 watch 到 volatile Ozone 观察变量。 */
 void MotorControl_UpdateDiagWatch(volatile MotorControlDiagWatch_t* out)
 {
     MotorControlDiagWatch_t snapshot;
@@ -289,10 +294,11 @@ void MotorControl_UpdateDiagWatch(volatile MotorControlDiagWatch_t* out)
         return;
     }
 
-    fill_diag_watch(&snapshot);
+    MotorControlDiag_FillWatch(&s_mc, &snapshot);
     copy_diag_watch_to_volatile(out, &snapshot);
 }
 
+/** @brief 从 volatile 命令入口逐字段复制，避免快环直接读取 volatile 结构。 */
 static void copy_command(const volatile MotorControlCommand_t* src, MotorControlCommand_t* dst)
 {
     dst->enable = src->enable;
@@ -316,11 +322,13 @@ static void copy_command(const volatile MotorControlCommand_t* src, MotorControl
     dst->voltage_theta_offset = src->voltage_theta_offset;
 }
 
+/** @brief 将有符号给定限制到正负 limit。 */
 static int16_t clamp_ref(int16_t value, int16_t limit)
 {
     return foc_clamp_s16(value, (int16_t)-limit, limit);
 }
 
+/** @brief 将限幅参数转为非负并限制最大值。 */
 static int16_t abs_limit(int16_t value, int16_t limit)
 {
     if (value < 0)
@@ -330,22 +338,26 @@ static int16_t abs_limit(int16_t value, int16_t limit)
     return foc_clamp_s16(value, 0, limit);
 }
 
+/** @brief 将 int32 给定限制到正负 limit。 */
 static int32_t clamp_s32_local(int32_t value, int32_t limit)
 {
     return foc_clamp_s32(value, -limit, limit);
 }
 
+/** @brief 将机械 rpm 转为编码器电角 count/s。 */
 static int32_t rpm_to_speed_counts(int16_t rpm)
 {
     return ((int32_t)rpm * MC_SPEED_COUNTS_PER_REV) / 60L;
 }
 
 #if (CTRL_SPD_FB_SOURCE == CTRL_SPD_FB_SOURCE_MA600)
+/** @brief 将 int32 rpm 转为编码器电角 count/s，供 MA600 spike 限幅使用。 */
 static int32_t rpm_to_speed_counts_s32(int32_t rpm)
 {
     return (rpm * MC_SPEED_COUNTS_PER_REV) / 60L;
 }
 
+/** @brief 将 MA600 speed raw 换算为编码器电角 count/s。 */
 static int32_t ma600_speed_to_counts(int16_t speed_raw)
 {
     return (int32_t)speed_raw * (int32_t)CTRL_SPD_MA600_COUNTS_PER_SEC_PER_LSB *
@@ -353,17 +365,14 @@ static int32_t ma600_speed_to_counts(int16_t speed_raw)
 }
 #endif
 
+/** @brief 将编码器电角 count/s 转为机械 rpm 观察单位。 */
 int16_t MotorControl_InternalSpeedCountsToRpm(int32_t speed)
 {
     int32_t rpm = (speed * 60L) / MC_SPEED_COUNTS_PER_REV;
     return (int16_t)foc_clamp_s32(rpm, -32768, 32767);
 }
 
-static int16_t speed_counts_to_rpm(int32_t speed)
-{
-    return MotorControl_InternalSpeedCountsToRpm(speed);
-}
-
+/** @brief 对 int16 命令做斜率限制，避免电流/速度命令突变。 */
 static int16_t slew_s16(int16_t current, int16_t target, int16_t step)
 {
     int32_t delta;
@@ -385,11 +394,7 @@ static int16_t slew_s16(int16_t current, int16_t target, int16_t step)
     return target;
 }
 
-static uint8_t current_ok(void)
-{
-    return current_ok_state(&s_mc);
-}
-
+/** @brief 检查当前状态中的三相电流和 KCL 和是否在安全范围。 */
 static uint8_t current_ok_state(const MotorControlCState* mc)
 {
     uint8_t ok = 1U;
@@ -413,11 +418,13 @@ static uint8_t current_ok_state(const MotorControlCState* mc)
     return ok;
 }
 
+/** @brief 供诊断模块复用的电流安全检查入口。 */
 uint8_t MotorControl_InternalCurrentOk(MotorControlCState* mc)
 {
     return current_ok_state(mc);
 }
 
+/** @brief 将 MA600 raw 按零位、方向和极对映射为 16-bit 电角度。 */
 static uint16_t electrical_from_raw(uint16_t raw, int16_t trim)
 {
     const int32_t zero = (int32_t)MOT_ELEC_ZERO + (int32_t)trim;
@@ -428,11 +435,13 @@ static uint16_t electrical_from_raw(uint16_t raw, int16_t trim)
 #endif
 }
 
+/** @brief 计算带 16-bit 回绕语义的 raw 增量。 */
 static int16_t encoder_raw_delta(MotorControlCState* mc, uint16_t raw)
 {
     return (int16_t)(raw - mc->encoder_raw);
 }
 
+/** @brief 根据单拍最大 raw 步进判断角度样本是否可信。 */
 static uint8_t encoder_raw_plausible(MotorControlCState* mc, uint16_t raw)
 {
     const int16_t delta = encoder_raw_delta(mc, raw);
@@ -446,6 +455,7 @@ static uint8_t encoder_raw_plausible(MotorControlCState* mc, uint16_t raw)
                      (delta >= -(int16_t)MOT_ENCODER_MAX_STEP_RAW));
 }
 
+/** @brief 角度读取失败时保持上一角度，并更新 age/ok。 */
 static uint8_t hold_last_encoder_angle(MotorControlCState* mc)
 {
     if (mc->encoder_age < 255U)
@@ -458,6 +468,7 @@ static uint8_t hold_last_encoder_angle(MotorControlCState* mc)
     return mc->encoder_ok;
 }
 
+/** @brief 记录坏角样本并保持上一角度。 */
 static uint8_t reject_bad_encoder_angle(MotorControlCState* mc, uint16_t raw)
 {
     mc->encoder_reject_count++;
@@ -467,6 +478,7 @@ static uint8_t reject_bad_encoder_angle(MotorControlCState* mc, uint16_t raw)
     return hold_last_encoder_angle(mc);
 }
 
+/** @brief 接受 raw 样本，更新电角度、步进和缓存状态。 */
 static void accept_encoder_angle(MotorControlCState* mc, uint16_t raw)
 {
     if (mc->encoder_initialized == 0U)
@@ -487,6 +499,7 @@ static void accept_encoder_angle(MotorControlCState* mc, uint16_t raw)
     mc->encoder_age = 0U;
 }
 
+/** @brief 坏角后立即重读一次，用于过滤单帧 SPI 毛刺。 */
 static uint8_t retry_encoder_angle(MotorControlCState* mc)
 {
     uint16_t retry_raw;
@@ -509,6 +522,7 @@ static uint8_t retry_encoder_angle(MotorControlCState* mc)
     return 1U;
 }
 
+/** @brief 获取当前电流环/诊断电压限幅，命令未设置时回退默认值。 */
 static int16_t current_voltage_limit(const MotorControlCState* mc)
 {
     int16_t limit = mc->command.current_v_limit;
@@ -520,6 +534,7 @@ static int16_t current_voltage_limit(const MotorControlCState* mc)
     return limit;
 }
 
+/** @brief 清空编码器、速度反馈和坏角诊断状态。 */
 static void reset_encoder_state(void)
 {
     s_mc.encoder_raw = 0U;
@@ -548,6 +563,7 @@ static void reset_encoder_state(void)
     s_mc.encoder_initialized = 0U;
 }
 
+/** @brief 清空电流 PI 和当前电流给定斜坡状态。 */
 static void reset_current_loop(void)
 {
     foc_pi_reset(&s_mc.current_pi_d);
@@ -558,6 +574,7 @@ static void reset_current_loop(void)
     s_mc.iq_ref_active = 0;
 }
 
+/** @brief 清空速度 PI、速度估算和编码器状态。 */
 static void reset_speed_loop(void)
 {
     reset_encoder_state();
@@ -565,6 +582,7 @@ static void reset_speed_loop(void)
     s_mc.speed_sample_div = 0U;
 }
 
+/** @brief 快环读取编码器角度，执行可信度检查、重读和接受/拒绝。 */
 static uint8_t update_encoder_angle_state(MotorControlCState* mc)
 {
     uint8_t ok;
@@ -591,11 +609,13 @@ static uint8_t update_encoder_angle_state(MotorControlCState* mc)
     return 1U;
 }
 
+/** @brief 供诊断模块复用的编码器角度更新入口。 */
 uint8_t MotorControl_InternalUpdateEncoderAngle(MotorControlCState* mc)
 {
     return update_encoder_angle_state(mc);
 }
 
+/** @brief 根据编码器 raw 差分或 MA600 speed frame 更新速度反馈。 */
 static uint8_t update_encoder_speed_state(MotorControlCState* mc)
 {
     uint16_t raw;
@@ -668,15 +688,17 @@ static uint8_t update_encoder_speed_state(MotorControlCState* mc)
     return 1U;
 }
 
+/** @brief 供诊断模块复用的速度反馈更新入口。 */
 uint8_t MotorControl_InternalUpdateEncoderSpeed(MotorControlCState* mc)
 {
     return update_encoder_speed_state(mc);
 }
 
+/** @brief 运行速度 PI，输出经斜率限制的 q 轴电流命令。 */
 static void update_speed_loop(void)
 {
-    const int16_t ref_rpm = speed_counts_to_rpm(s_mc.command.speed_ref);
-    const int16_t fb_rpm = speed_counts_to_rpm(s_mc.speed_fb);
+    const int16_t ref_rpm = MotorControl_InternalSpeedCountsToRpm(s_mc.command.speed_ref);
+    const int16_t fb_rpm = MotorControl_InternalSpeedCountsToRpm(s_mc.speed_fb);
     int16_t iq_target;
 
     s_mc.speed_err_rpm = (int16_t)foc_clamp_s32((int32_t)ref_rpm - (int32_t)fb_rpm,
@@ -697,6 +719,7 @@ static void update_speed_loop(void)
     s_mc.speed_iq_ref = slew_s16(s_mc.speed_iq_ref, iq_target, CTRL_SPD_IQ_SLEW_STEP);
 }
 
+/** @brief 关闭 PWM 并清空输出/速度 PI 状态。 */
 void MotorControl_InternalEnterSafeState(MotorControlCState* mc)
 {
     pwm_off();
@@ -710,6 +733,7 @@ void MotorControl_InternalEnterSafeState(MotorControlCState* mc)
     foc_pi_reset(&mc->speed_pi);
 }
 
+/** @brief 统一输出 dq 电压矢量，含限幅、反 Park、SVPWM 和 PWM 使能。 */
 void MotorControl_InternalApplyVoltageVector(MotorControlCState* mc, int16_t vd, int16_t vq,
                                              uint16_t theta)
 {
@@ -726,6 +750,7 @@ void MotorControl_InternalApplyVoltageVector(MotorControlCState* mc, int16_t vd,
     mc->pwm_output = 1U;
 }
 
+/** @brief 运行 Current/Speed 主线快环，speed_mode 非 0 时先更新速度外环。 */
 static void run_current_fast_loop(uint8_t speed_mode)
 {
     FocAlphaBeta_t current_ab;
@@ -736,7 +761,7 @@ static void run_current_fast_loop(uint8_t speed_mode)
     s_mc.current.u = curr_u();
     s_mc.current.v = curr_v();
     s_mc.current.w = curr_w();
-    if (current_ok() == 0U)
+    if (current_ok_state(&s_mc) == 0U)
     {
         s_mc.state = MC_STATE_FAULT;
         s_mc.fault = MC_FAULT_CURRENT;
@@ -805,6 +830,7 @@ static void run_current_fast_loop(uint8_t speed_mode)
     s_mc.fast_loop_count++;
 }
 
+/** @brief 填充 Current/Speed 主线 watch 快照。 */
 static void fill_watch(MotorControlWatch_t* out)
 {
     volatile uint16_t duty_u = 0U;
@@ -836,9 +862,9 @@ static void fill_watch(MotorControlWatch_t* out)
     out->id_ref = s_mc.id_ref_active;
     out->iq_ref = s_mc.iq_ref_active;
     out->speed_ref = s_mc.command.speed_ref;
-    out->speed_ref_rpm = speed_counts_to_rpm(s_mc.command.speed_ref);
+    out->speed_ref_rpm = MotorControl_InternalSpeedCountsToRpm(s_mc.command.speed_ref);
     out->speed_fb = s_mc.speed_fb;
-    out->speed_fb_rpm = speed_counts_to_rpm(s_mc.speed_fb);
+    out->speed_fb_rpm = MotorControl_InternalSpeedCountsToRpm(s_mc.speed_fb);
     out->speed_err_rpm = s_mc.speed_err_rpm;
     out->speed_iq_cmd = s_mc.speed_iq_ref;
     out->speed_pi_integral = s_mc.speed_pi.integral;
@@ -851,16 +877,12 @@ static void fill_watch(MotorControlWatch_t* out)
     out->duty_u = (uint16_t)duty_u;
     out->duty_v = (uint16_t)duty_v;
     out->duty_w = (uint16_t)duty_w;
-    out->pwm_safe = pwm_is_safe();
+    out->pwm_safe = pwm_is_off_safe();
     out->pwm_running = (uint8_t)((pwm_out != 0U) && (pwm_is_running() != 0U));
     out->check = s_mc.check;
 }
 
-static void fill_diag_watch(MotorControlDiagWatch_t* out)
-{
-    MotorControlDiag_FillWatch(&s_mc, out);
-}
-
+/** @brief 将主线 watch 快照逐字段写入 volatile 目标。 */
 static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
                                    const MotorControlWatch_t* src)
 {
@@ -907,6 +929,7 @@ static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
     dst->check.ready_closed_loop = src->check.ready_closed_loop;
 }
 
+/** @brief 将诊断 watch 快照逐字段写入 volatile 目标。 */
 static void copy_diag_watch_to_volatile(volatile MotorControlDiagWatch_t* dst,
                                         const MotorControlDiagWatch_t* src)
 {

@@ -20,7 +20,7 @@ void Motor::init()
 void Motor::enterSafeState()
 {
     pwm_off();
-    pwm_safe_ = (pwm_is_safe() != 0U);
+    pwm_safe_ = (pwm_is_off_safe() != 0U);
     pwm_running_ = (pwm_is_running() != 0U);
     snapshot_.active = 0U;
 }
@@ -214,7 +214,7 @@ void Motor::outputVoltage(FocDq_t voltage, uint16_t theta, bool output_ready)
         pwm_off();
     }
 
-    pwm_safe_ = (pwm_is_safe() != 0U);
+    pwm_safe_ = (pwm_is_off_safe() != 0U);
     pwm_running_ = (pwm_is_running() != 0U);
 }
 

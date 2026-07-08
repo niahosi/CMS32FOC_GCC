@@ -24,6 +24,7 @@ static const int16_t s_sin_quarter[257] = {
     32469, 32495, 32521, 32545, 32567, 32589, 32609, 32628, 32646, 32663, 32678, 32692, 32705,
     32717, 32728, 32737, 32745, 32752, 32757, 32761, 32765, 32766, 32767};
 
+/** @brief 对 signed int32 做保持符号的右移缩放。 */
 static int32_t scale_down_s32(int32_t value, uint8_t shift)
 {
     if (shift == 0U)
@@ -41,11 +42,13 @@ static int32_t scale_down_s32(int32_t value, uint8_t shift)
     return -((-value) >> shift);
 }
 
+/** @brief 将 int16 绝对值安全扩展到 int32。 */
 static int32_t abs_s16_to_s32(int16_t value)
 {
     return (value < 0) ? -(int32_t)value : (int32_t)value;
 }
 
+/** @brief 用四分之一波表和线性插值计算 Q15 sin。 */
 int16_t foc_sin_q15(uint16_t angle)
 {
     uint16_t phase = (uint16_t)(angle & 0x3FFFU);
@@ -75,11 +78,13 @@ int16_t foc_sin_q15(uint16_t angle)
     return (int16_t)value;
 }
 
+/** @brief 通过 sin 相位偏移计算 Q15 cos。 */
 int16_t foc_cos_q15(uint16_t angle)
 {
     return foc_sin_q15((uint16_t)(angle + 16384U));
 }
 
+/** @brief int16 饱和限幅。 */
 int16_t foc_clamp_s16(int16_t value, int16_t min, int16_t max)
 {
     if (value < min)
@@ -93,6 +98,7 @@ int16_t foc_clamp_s16(int16_t value, int16_t min, int16_t max)
     return value;
 }
 
+/** @brief int32 饱和限幅。 */
 int32_t foc_clamp_s32(int32_t value, int32_t min, int32_t max)
 {
     if (value < min)
@@ -106,6 +112,7 @@ int32_t foc_clamp_s32(int32_t value, int32_t min, int32_t max)
     return value;
 }
 
+/** @brief 去除三相平均值，降低公共偏置对 Clarke 的影响。 */
 FocPhaseCurrent_t foc_phase_sum_correct(FocPhaseCurrent_t current)
 {
     int16_t mid = (int16_t)(((int32_t)current.u + (int32_t)current.v + (int32_t)current.w) / 3);
@@ -117,6 +124,7 @@ FocPhaseCurrent_t foc_phase_sum_correct(FocPhaseCurrent_t current)
     return corrected;
 }
 
+/** @brief 使用 U/V 两相计算 alpha/beta。 */
 FocAlphaBeta_t foc_clarke_2phase(int16_t iu, int16_t iv)
 {
     FocAlphaBeta_t out = {
@@ -126,12 +134,14 @@ FocAlphaBeta_t foc_clarke_2phase(int16_t iu, int16_t iv)
     return out;
 }
 
+/** @brief 三相电流先去公共偏置，再执行两相 Clarke。 */
 FocAlphaBeta_t foc_clarke_3phase(FocPhaseCurrent_t current)
 {
     FocPhaseCurrent_t corrected = foc_phase_sum_correct(current);
     return foc_clarke_2phase(corrected.u, corrected.v);
 }
 
+/** @brief 将 alpha/beta 电流旋转到 d/q 坐标系。 */
 FocDq_t foc_park(FocAlphaBeta_t input, uint16_t theta)
 {
     int16_t sin_theta = foc_sin_q15(theta);
@@ -143,6 +153,7 @@ FocDq_t foc_park(FocAlphaBeta_t input, uint16_t theta)
     return out;
 }
 
+/** @brief 将 d/q 电压反旋转到 alpha/beta 坐标系。 */
 FocAlphaBeta_t foc_inv_park(FocDq_t input, uint16_t theta)
 {
     int16_t sin_theta = foc_sin_q15(theta);
@@ -154,6 +165,7 @@ FocAlphaBeta_t foc_inv_park(FocDq_t input, uint16_t theta)
     return out;
 }
 
+/** @brief 设置 PI 参数并清空内部状态。 */
 void foc_pi_init(FocPi_t* pi, int16_t kp, int16_t ki, int16_t output_min, int16_t output_max,
                  uint8_t shift)
 {
@@ -172,6 +184,7 @@ void foc_pi_init(FocPi_t* pi, int16_t kp, int16_t ki, int16_t output_min, int16_
     pi->shift = shift;
 }
 
+/** @brief 清空 PI 运行状态，保留增益和限幅。 */
 void foc_pi_reset(FocPi_t* pi)
 {
     if (pi == 0)
@@ -184,6 +197,7 @@ void foc_pi_reset(FocPi_t* pi)
     pi->output = 0;
 }
 
+/** @brief 在线更新 PI 增益和限幅，不清空积分。 */
 void foc_pi_set_gains(FocPi_t* pi, int16_t kp, int16_t ki, int16_t output_min,
                       int16_t output_max, uint8_t shift)
 {
@@ -198,6 +212,7 @@ void foc_pi_set_gains(FocPi_t* pi, int16_t kp, int16_t ki, int16_t output_min,
     pi->shift = shift;
 }
 
+/** @brief 执行定点 PI 更新，含输出限幅和简单抗积分饱和。 */
 int16_t foc_pi_update(FocPi_t* pi, int16_t ref, int16_t feedback)
 {
     int32_t integral_new;
@@ -245,6 +260,7 @@ int16_t foc_pi_update(FocPi_t* pi, int16_t ref, int16_t feedback)
     return pi->output;
 }
 
+/** @brief 近似限制 dq 电压矢量幅值，避免 SVPWM 过调制。 */
 uint8_t foc_limit_dq(FocDq_t* voltage, int16_t limit)
 {
     int32_t abs_d;
@@ -282,6 +298,7 @@ uint8_t foc_limit_dq(FocDq_t* voltage, int16_t limit)
     return 1U;
 }
 
+/** @brief 计算零序注入 SVPWM duty，并夹紧到安全 duty 范围。 */
 FocDuty_t foc_svpwm(FocAlphaBeta_t voltage, uint16_t vdc, uint16_t duty_min,
                     uint16_t duty_max)
 {
