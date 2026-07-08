@@ -15,12 +15,14 @@ flowchart TD
     main["main.c"] --> bsp["bsp_init()"]
     bsp --> mcinit["MotorControl_Init()"]
     mcinit --> watch0["MotorControl_UpdateWatch()"]
-    watch0 --> adcstart["bsp_start_adc_sync()"]
+    watch0 --> diagwatch0["MotorControl_UpdateDiagWatch()"]
+    diagwatch0 --> adcstart["bsp_start_adc_sync()"]
     adcstart --> loop["while(1)"]
     loop --> apply["MotorControl_ApplyCommand(g_motor_cmd)"]
     apply --> slow["MotorControl_RunSlowLoop()"]
     slow --> watch["MotorControl_UpdateWatch(g_motor_watch)"]
-    watch --> loop
+    watch --> diagwatch["MotorControl_UpdateDiagWatch(g_motor_diag_watch)"]
+    diagwatch --> loop
 ```
 
 主循环只负责命令复制、慢速状态检查和 Ozone watch 刷新。真正的电流采样和 FOC 快环在 ADC 中断里跑。
@@ -36,14 +38,14 @@ flowchart TD
     sample --> ready{"sample_ready?"}
     ready -- no --> ret0["return 0"]
     ready -- yes --> mode{"control_mode"}
-    mode -- 3 VF --> vf["run_vf_fast_loop()"]
-    mode -- 4 Align --> align["run_align_fast_loop()"]
-    mode -- 5 EncoderVoltage --> ev["run_encoder_voltage_fast_loop()"]
+    mode -- 3 VF --> diag["MotorControlDiag_RunFastLoop()"]
+    mode -- 4 Align --> diag
+    mode -- 5 EncoderVoltage --> diag
     mode -- 1 Current --> cur["run_current_fast_loop(0)"]
     mode -- 2 Speed --> spd["run_current_fast_loop(1)"]
 ```
 
-`curr_irq()` 只有在双点采样已经完成并解析出新电流后才返回 ready。速度环和电流环不会在主循环里直接更新 PWM。
+`curr_irq()` 只有在双点采样已经完成并解析出新电流后才返回 ready。速度环和电流环不会在主循环里直接更新 PWM。`control_mode = 3/4/5` 已经隔离到 `motor_control_diag.c`，主控制文件只直接实现 Current/Speed；诊断模式仍复用主线的电流检查、编码器基础更新和电压输出 helper。
 
 ## 电流采样链路
 
@@ -93,6 +95,8 @@ flowchart TD
 
 `control_mode = 1` 使用命令里的 `id_ref/iq_ref`。`control_mode = 2` 先用速度 PI 生成 `iq_ref`，再走同一套电流环。电流环输出的 `vd/vq` 和 VF 开环里的 `vf_voltage` 都是同一套 SVPWM 电压 count 量纲，但来源不同。
 
+速度环当前以 rpm 作为 PI 输入和调试观察单位。`speed_ref_rpm` 非 0 时会覆盖 `speed_ref`，低于 `CTRL_SPD_CMD_DEADBAND_RPM` 的给定会复位速度 PI 并输出 0 `iq_ref`。默认差分测速先累计 `CTRL_SPD_DIFF_WINDOW_SAMPLES` 个 500 Hz 角度差分样本，再做低通，避免单次 MA600 raw 抖动直接进入速度环。速度 PI 输出再经过 `CTRL_SPD_IQ_SLEW_STEP` 斜率限制后送入电流环，避免反馈毛刺让 `iq_ref` 在正负限幅间快速翻转。若响应偏慢，优先减小差分窗口或 `CTRL_SPD_FILTER_SHIFT`；若 `speed_iq_cmd` 长时间贴住 `iq_limit`，则响应主要受扭矩上限限制。
+
 ## Ozone 观察入口
 
 常用命令变量：
@@ -106,18 +110,26 @@ flowchart TD
 | `g_motor_cmd.elec_zero_trim` | 电角度零位临时 trim |
 | `g_motor_cmd.voltage_theta_offset` | 动态相位提前诊断 offset |
 
-常用观察变量：
+主 watch `g_motor_watch` 只保留 Current/Speed 主线必需字段：
 
 | 字段 | 重点 |
 | --- | --- |
 | `iu_cnt/iv_cnt/iw_cnt`, `i_sum` | 三相电流和 KCL 重构结果 |
 | `id/iq`, `id_ref/iq_ref` | dq 投影和电流环跟随 |
+| `speed_ref_rpm`, `speed_fb_rpm`, `speed_err_rpm`, `speed_iq_cmd` | 速度环给定、反馈、误差和输出扭矩命令 |
 | `vd/vq`, `v_limited` | 电流环输出电压及限幅 |
 | `duty_u/duty_v/duty_w` | SVPWM 输出 |
-| `sample_pair` | 当前采样的两相组合，`0=UV`, `1=UW`, `2=VW` |
-| `sample_common_window` | 当前 pair 的共同低边采样窗口 |
-| `sample_tick_a/b` | 实际 ADC 触发点 |
-| `sample_spread0/1` | 同窗口双点差值 |
-| `iv_spike_count/iw_spike_count` | 相邻采样尖峰计数 |
+| `encoder_raw/encoder_elec/encoder_pos/encoder_ok` | 闭环使用的编码器基础状态 |
+| `check.*`, `state`, `fault_reason` | 慢环安全态和故障状态 |
 
-旧的 `sample_three_shunt` 和 `sample_meas_*` 字段已经从当前 watch 中移除。Ozone 重新加载 ELF 后需要删除旧 watch 项，再按上表添加当前字段。
+诊断 watch `g_motor_diag_watch` 承接调试字段：
+
+| 字段 | 重点 |
+| --- | --- |
+| `open_loop_theta`, `open_loop_reset_count`, `voltage_theta` | VF/Align 开环角和输出角；VF 运行中 reset count 不应增加 |
+| `encoder_raw_step`, `encoder_reject_*`, `encoder_retry_*` | 坏角拒绝和即时重读观测 |
+| `align_*` | Align 扫描状态和得到的 `align_zero_trim` |
+| `speed_fb_diff*`, `speed_fb_ma600*`, `ma600_speed_raw`, `speed_fb_source` | 差分测速与 MA600 speed frame 对比 |
+| `command_*` | Ozone 命令镜像，辅助确认命令是否被主循环复制 |
+
+旧的 `sample_three_shunt` 和 `sample_meas_*` 字段已经从当前 watch 中移除。Ozone 重新加载 ELF 后需要删除旧 watch 项，再按 `g_motor_watch` 和 `g_motor_diag_watch` 分别添加当前字段。

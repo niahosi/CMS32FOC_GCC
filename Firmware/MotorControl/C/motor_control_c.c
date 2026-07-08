@@ -1,104 +1,16 @@
 #include "motor_control_c.h"
 
-#include "Config.h"
+#include "motor_control_diag.h"
+#include "motor_control_internal.h"
+
 #include "foc_bsp.h"
 #include "foc_curr.h"
-#include "foc_math.h"
 #include "foc_pwm.h"
-
-#define MC_STATE_IDLE 0U
-#define MC_STATE_CLOSED_LOOP 3U
-#define MC_STATE_FAULT 4U
-
-#define MC_MODE_OFF 0U
-#define MC_MODE_CURRENT 1U
-#define MC_MODE_SPEED 2U
-#define MC_MODE_VF_OPEN_LOOP 3U
-#define MC_MODE_ALIGN_LOCK 4U
-#define MC_MODE_ENCODER_VOLTAGE 5U
-
-#define MC_FAULT_NONE 0U
-#define MC_FAULT_UNSUPPORTED_MODE 1U
-#define MC_FAULT_CURRENT 2U
-#define MC_FAULT_OPEN_LOOP_TIMEOUT 3U
-#define MC_FAULT_ENCODER 4U
-
-#define MC_ALIGN_STAGE_REV_FAST 1U
-#define MC_ALIGN_STAGE_FWD_FAST 2U
-#define MC_ALIGN_STAGE_FWD_SAMPLE 3U
-#define MC_ALIGN_STAGE_REV_SAMPLE 4U
-#define MC_ALIGN_STAGE_DONE 5U
-
-#define MC_CURRENT_HZ (PWM_FREQ_HZ / CTRL_FAST_LOOP_DIV)
-#define MC_SPEED_SAMPLE_DIV (MC_CURRENT_HZ / CTRL_SPD_EST_HZ)
-#define MC_SPEED_COUNTS_PER_REV ((int32_t)MOT_SENSOR_CPR * (int32_t)MOT_SENSOR_POLE_PAIRS)
 
 #if (CTRL_SPD_FB_SOURCE != CTRL_SPD_FB_SOURCE_DIFF) && \
     (CTRL_SPD_FB_SOURCE != CTRL_SPD_FB_SOURCE_MA600)
 #error "Unsupported CTRL_SPD_FB_SOURCE"
 #endif
-
-typedef struct
-{
-    uint8_t state;
-    uint8_t fault;
-    uint8_t enabled;
-    uint8_t mode;
-    uint8_t pwm_output;
-    uint32_t command_apply_count;
-    uint32_t slow_loop_count;
-    uint32_t fast_loop_count;
-    uint32_t open_loop_ticks;
-    uint32_t open_loop_timeout_ticks;
-    uint32_t align_ticks;
-    uint16_t current_loop_div;
-    uint16_t speed_sample_div;
-    int32_t open_loop_theta_acc;
-    uint16_t open_loop_theta;
-    uint16_t encoder_raw;
-    uint16_t encoder_elec;
-    uint16_t encoder_prev_raw;
-    int16_t encoder_delta;
-    int32_t encoder_pos;
-    int16_t encoder_raw_step;
-    int16_t encoder_reject_step;
-    uint16_t encoder_reject_raw;
-    uint32_t encoder_reject_count;
-    int32_t speed_fb;
-    int32_t speed_fb_diff;
-    int32_t speed_fb_ma600;
-    int16_t ma600_speed_raw;
-    int16_t speed_err_rpm;
-    int16_t speed_iq_ref;
-    uint8_t align_done;
-    uint16_t align_raw;
-    int16_t align_zero_trim;
-    uint16_t align_encoder_elec;
-    uint8_t align_stage;
-    uint16_t align_halfcycles;
-    int16_t align_theta_prev;
-    int16_t align_first_delta;
-    int16_t align_pull_delta;
-    uint16_t align_sample_count;
-    int32_t align_delta_sum;
-    uint8_t encoder_age;
-    uint8_t encoder_ok;
-    uint8_t encoder_initialized;
-    FocPi_t speed_pi;
-    FocPi_t current_pi_d;
-    FocPi_t current_pi_q;
-    MotorControlCommand_t command;
-    FocPhaseCurrent_t current;
-    FocDq_t current_dq;
-    int16_t id_ref_active;
-    int16_t iq_ref_active;
-    FocAlphaBeta_t voltage_ab;
-    FocDq_t voltage_dq;
-    uint16_t voltage_theta;
-    FocDuty_t duty;
-    uint8_t voltage_limited;
-    MotorControlCheck_t check;
-} MotorControlCState;
 
 static MotorControlCState s_mc;
 
@@ -113,37 +25,29 @@ static int32_t ma600_speed_to_counts(int16_t speed_raw);
 static int32_t rpm_to_speed_counts_s32(int32_t rpm);
 #endif
 static int16_t slew_s16(int16_t current, int16_t target, int16_t step);
-static int16_t align_trim_from_raw(uint16_t raw, uint16_t target_theta);
 static uint8_t current_ok(void);
+static uint8_t current_ok_state(const MotorControlCState* mc);
 static uint16_t electrical_from_raw(uint16_t raw, int16_t trim);
-static int16_t encoder_raw_delta(uint16_t raw);
-static uint8_t encoder_raw_plausible(uint16_t raw);
-static uint8_t hold_last_encoder_angle(void);
-static uint8_t reject_bad_encoder_angle(uint16_t raw);
-static void accept_encoder_angle(uint16_t raw);
-static int16_t current_voltage_limit(void);
+static int16_t encoder_raw_delta(MotorControlCState* mc, uint16_t raw);
+static uint8_t encoder_raw_plausible(MotorControlCState* mc, uint16_t raw);
+static uint8_t hold_last_encoder_angle(MotorControlCState* mc);
+static uint8_t reject_bad_encoder_angle(MotorControlCState* mc, uint16_t raw);
+static void accept_encoder_angle(MotorControlCState* mc, uint16_t raw);
+static uint8_t retry_encoder_angle(MotorControlCState* mc);
+static int16_t current_voltage_limit(const MotorControlCState* mc);
 static void reset_encoder_state(void);
 static void reset_current_loop(void);
 static void reset_speed_loop(void);
-static void reset_align_state(void);
-static uint8_t update_encoder_angle(void);
-static uint8_t update_encoder_speed(void);
+static uint8_t update_encoder_angle_state(MotorControlCState* mc);
+static uint8_t update_encoder_speed_state(MotorControlCState* mc);
 static void update_speed_loop(void);
-static void apply_voltage_vector(int16_t vd, int16_t vq, uint16_t theta);
-static void enter_safe_state(void);
-static void set_align_stage(uint8_t stage);
-static uint16_t update_align_theta(int32_t speed);
-static void count_align_halfcycle(uint16_t theta);
-static void sample_align_trim(uint16_t theta);
-static void finish_align_scan(void);
-static void run_align_fast_loop(void);
-static void run_vf_fast_loop(void);
-static void run_encoder_voltage_fast_loop(void);
 static void run_current_fast_loop(uint8_t speed_mode);
-static uint16_t update_open_loop_theta(void);
 static void fill_watch(MotorControlWatch_t* out);
+static void fill_diag_watch(MotorControlDiagWatch_t* out);
 static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
                                    const MotorControlWatch_t* src);
+static void copy_diag_watch_to_volatile(volatile MotorControlDiagWatch_t* dst,
+                                        const MotorControlDiagWatch_t* src);
 
 void MotorControl_Init(void)
 {
@@ -155,13 +59,8 @@ void MotorControl_Init(void)
     s_mc.command_apply_count = 0U;
     s_mc.slow_loop_count = 0U;
     s_mc.fast_loop_count = 0U;
-    s_mc.open_loop_ticks = 0U;
-    s_mc.open_loop_timeout_ticks = (uint32_t)OL_TIMEOUT_MS * 2U;
-    s_mc.align_ticks = 0U;
     s_mc.current_loop_div = 0U;
     s_mc.speed_sample_div = 0U;
-    s_mc.open_loop_theta_acc = 0;
-    s_mc.open_loop_theta = 0U;
     reset_encoder_state();
     foc_pi_init(&s_mc.speed_pi, CTRL_SPD_KP, CTRL_SPD_KI, -CTRL_SPD_IQ_LIMIT,
                 CTRL_SPD_IQ_LIMIT, CTRL_SPD_ERR_SHIFT);
@@ -178,7 +77,7 @@ void MotorControl_Init(void)
     s_mc.voltage_theta = 0U;
     s_mc.duty = (FocDuty_t){PWM_DUTY_50, PWM_DUTY_50, PWM_DUTY_50};
     s_mc.voltage_limited = 0U;
-    reset_align_state();
+    MotorControlDiag_Init();
     s_mc.check = (MotorControlCheck_t){0U, 1U, 1U, 0U};
     pwm_off();
 }
@@ -200,9 +99,17 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
     {
         reset_speed_loop();
         reset_current_loop();
-        if (next_mode == MC_MODE_ALIGN_LOCK)
+        if (next_mode == MC_MODE_VF_OPEN_LOOP)
         {
-            reset_align_state();
+            MotorControlDiag_ResetForMode(next_mode);
+        }
+        else if (next_mode == MC_MODE_ALIGN_LOCK)
+        {
+            MotorControlDiag_ResetForMode(next_mode);
+        }
+        else if (next_mode == MC_MODE_ENCODER_VOLTAGE)
+        {
+            MotorControlDiag_ResetForMode(next_mode);
         }
     }
     s_mc.mode = next_mode;
@@ -231,7 +138,6 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
     }
     s_mc.command.speed_ref = clamp_s32_local(s_mc.command.speed_ref, CTRL_SPD_REF_LIMIT);
     s_mc.command.vf_voltage = clamp_ref(s_mc.command.vf_voltage, CTRL_CUR_V_LIMIT);
-    s_mc.open_loop_timeout_ticks = (uint32_t)s_mc.command.open_loop_timeout_ms * 2U;
     if ((s_mc.enabled != 0U) && (s_mc.mode == MC_MODE_VF_OPEN_LOOP))
     {
         curr_set_vf_voltage(s_mc.command.vf_voltage);
@@ -245,7 +151,7 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
     {
         if ((s_mc.pwm_output != 0U) || (s_mc.state != MC_STATE_IDLE))
         {
-            enter_safe_state();
+            MotorControl_InternalEnterSafeState(&s_mc);
         }
         s_mc.state = MC_STATE_IDLE;
         s_mc.fault = MC_FAULT_NONE;
@@ -289,10 +195,8 @@ void MotorControl_RunSlowLoop(void)
         {
             if (s_mc.state != MC_STATE_CLOSED_LOOP)
             {
-                s_mc.open_loop_ticks = 0U;
-                s_mc.open_loop_theta = 0U;
-                s_mc.open_loop_theta_acc = 0;
-                if (s_mc.mode != MC_MODE_VF_OPEN_LOOP)
+                if ((s_mc.mode != MC_MODE_VF_OPEN_LOOP) &&
+                    (s_mc.mode != MC_MODE_ALIGN_LOCK))
                 {
                     reset_speed_loop();
                 }
@@ -305,14 +209,14 @@ void MotorControl_RunSlowLoop(void)
         {
             s_mc.state = MC_STATE_FAULT;
             s_mc.fault = MC_FAULT_CURRENT;
-            enter_safe_state();
+            MotorControl_InternalEnterSafeState(&s_mc);
         }
     }
     else
     {
         s_mc.state = MC_STATE_FAULT;
         s_mc.fault = MC_FAULT_UNSUPPORTED_MODE;
-        enter_safe_state();
+        MotorControl_InternalEnterSafeState(&s_mc);
     }
 
     s_mc.slow_loop_count++;
@@ -328,17 +232,10 @@ uint8_t MotorControl_FastLoopFromAdcIrq(void)
 
     if ((s_mc.enabled != 0U) && (s_mc.state == MC_STATE_CLOSED_LOOP))
     {
-        if (s_mc.mode == MC_MODE_VF_OPEN_LOOP)
+        if ((s_mc.mode == MC_MODE_VF_OPEN_LOOP) || (s_mc.mode == MC_MODE_ALIGN_LOCK) ||
+            (s_mc.mode == MC_MODE_ENCODER_VOLTAGE))
         {
-            run_vf_fast_loop();
-        }
-        else if (s_mc.mode == MC_MODE_ALIGN_LOCK)
-        {
-            run_align_fast_loop();
-        }
-        else if (s_mc.mode == MC_MODE_ENCODER_VOLTAGE)
-        {
-            run_encoder_voltage_fast_loop();
+            MotorControlDiag_RunFastLoop(&s_mc);
         }
         else if (s_mc.mode == MC_MODE_SPEED)
         {
@@ -372,6 +269,28 @@ void MotorControl_UpdateWatch(volatile MotorControlWatch_t* out)
 
     fill_watch(&snapshot);
     copy_watch_to_volatile(out, &snapshot);
+}
+
+void MotorControl_GetDiagWatch(MotorControlDiagWatch_t* out)
+{
+    if (out == 0)
+    {
+        return;
+    }
+    fill_diag_watch(out);
+}
+
+void MotorControl_UpdateDiagWatch(volatile MotorControlDiagWatch_t* out)
+{
+    MotorControlDiagWatch_t snapshot;
+
+    if (out == 0)
+    {
+        return;
+    }
+
+    fill_diag_watch(&snapshot);
+    copy_diag_watch_to_volatile(out, &snapshot);
 }
 
 static void copy_command(const volatile MotorControlCommand_t* src, MotorControlCommand_t* dst)
@@ -434,10 +353,15 @@ static int32_t ma600_speed_to_counts(int16_t speed_raw)
 }
 #endif
 
-static int16_t speed_counts_to_rpm(int32_t speed)
+int16_t MotorControl_InternalSpeedCountsToRpm(int32_t speed)
 {
     int32_t rpm = (speed * 60L) / MC_SPEED_COUNTS_PER_REV;
     return (int16_t)foc_clamp_s32(rpm, -32768, 32767);
+}
+
+static int16_t speed_counts_to_rpm(int32_t speed)
+{
+    return MotorControl_InternalSpeedCountsToRpm(speed);
 }
 
 static int16_t slew_s16(int16_t current, int16_t target, int16_t step)
@@ -461,39 +385,37 @@ static int16_t slew_s16(int16_t current, int16_t target, int16_t step)
     return target;
 }
 
-static int16_t align_trim_from_raw(uint16_t raw, uint16_t target_theta)
-{
-    int32_t trim;
-
-#if MOT_SENSOR_DIR > 0
-    trim = (int32_t)target_theta - (int32_t)MOT_ELEC_ZERO -
-           (int32_t)raw * (int32_t)MOT_SENSOR_ELEC;
-#else
-    trim = (int32_t)target_theta - (int32_t)MOT_ELEC_ZERO +
-           (int32_t)raw * (int32_t)MOT_SENSOR_ELEC;
-#endif
-    return (int16_t)trim;
-}
-
 static uint8_t current_ok(void)
 {
+    return current_ok_state(&s_mc);
+}
+
+static uint8_t current_ok_state(const MotorControlCState* mc)
+{
     uint8_t ok = 1U;
+
+    (void)mc;
 #if (MOT_CHECK_CURR_CNT_LIMIT < 32767)
-    ok = (uint8_t)(ok && (s_mc.current.u >= -MOT_CHECK_CURR_CNT_LIMIT) &&
-                  (s_mc.current.u <= MOT_CHECK_CURR_CNT_LIMIT));
-    ok = (uint8_t)(ok && (s_mc.current.v >= -MOT_CHECK_CURR_CNT_LIMIT) &&
-                  (s_mc.current.v <= MOT_CHECK_CURR_CNT_LIMIT));
-    ok = (uint8_t)(ok && (s_mc.current.w >= -MOT_CHECK_CURR_CNT_LIMIT) &&
-                  (s_mc.current.w <= MOT_CHECK_CURR_CNT_LIMIT));
+    ok = (uint8_t)(ok && (mc->current.u >= -MOT_CHECK_CURR_CNT_LIMIT) &&
+                  (mc->current.u <= MOT_CHECK_CURR_CNT_LIMIT));
+    ok = (uint8_t)(ok && (mc->current.v >= -MOT_CHECK_CURR_CNT_LIMIT) &&
+                  (mc->current.v <= MOT_CHECK_CURR_CNT_LIMIT));
+    ok = (uint8_t)(ok && (mc->current.w >= -MOT_CHECK_CURR_CNT_LIMIT) &&
+                  (mc->current.w <= MOT_CHECK_CURR_CNT_LIMIT));
 #endif
 #if (MOT_CHECK_SUM_CNT_LIMIT < 32767)
     {
-        const int16_t sum = (int16_t)(s_mc.current.u + s_mc.current.v + s_mc.current.w);
+        const int16_t sum = (int16_t)(mc->current.u + mc->current.v + mc->current.w);
         ok = (uint8_t)(ok && (sum >= -MOT_CHECK_SUM_CNT_LIMIT) &&
                       (sum <= MOT_CHECK_SUM_CNT_LIMIT));
     }
 #endif
     return ok;
+}
+
+uint8_t MotorControl_InternalCurrentOk(MotorControlCState* mc)
+{
+    return current_ok_state(mc);
 }
 
 static uint16_t electrical_from_raw(uint16_t raw, int16_t trim)
@@ -506,16 +428,16 @@ static uint16_t electrical_from_raw(uint16_t raw, int16_t trim)
 #endif
 }
 
-static int16_t encoder_raw_delta(uint16_t raw)
+static int16_t encoder_raw_delta(MotorControlCState* mc, uint16_t raw)
 {
-    return (int16_t)(raw - s_mc.encoder_raw);
+    return (int16_t)(raw - mc->encoder_raw);
 }
 
-static uint8_t encoder_raw_plausible(uint16_t raw)
+static uint8_t encoder_raw_plausible(MotorControlCState* mc, uint16_t raw)
 {
-    const int16_t delta = encoder_raw_delta(raw);
+    const int16_t delta = encoder_raw_delta(mc, raw);
 
-    if (s_mc.encoder_initialized == 0U)
+    if (mc->encoder_initialized == 0U)
     {
         return 1U;
     }
@@ -524,49 +446,72 @@ static uint8_t encoder_raw_plausible(uint16_t raw)
                      (delta >= -(int16_t)MOT_ENCODER_MAX_STEP_RAW));
 }
 
-static uint8_t hold_last_encoder_angle(void)
+static uint8_t hold_last_encoder_angle(MotorControlCState* mc)
 {
-    if (s_mc.encoder_age < 255U)
+    if (mc->encoder_age < 255U)
     {
-        s_mc.encoder_age++;
+        mc->encoder_age++;
     }
 
-    s_mc.encoder_ok = (uint8_t)((s_mc.encoder_initialized != 0U) &&
-                                (s_mc.encoder_age <= MOT_ANGLE_MAX_AGE));
-    return s_mc.encoder_ok;
+    mc->encoder_ok = (uint8_t)((mc->encoder_initialized != 0U) &&
+                               (mc->encoder_age <= MOT_ANGLE_MAX_AGE));
+    return mc->encoder_ok;
 }
 
-static uint8_t reject_bad_encoder_angle(uint16_t raw)
+static uint8_t reject_bad_encoder_angle(MotorControlCState* mc, uint16_t raw)
 {
-    s_mc.encoder_reject_count++;
-    s_mc.encoder_reject_step = encoder_raw_delta(raw);
-    s_mc.encoder_reject_raw = raw;
-    return hold_last_encoder_angle();
+    mc->encoder_reject_count++;
+    mc->encoder_reject_step = encoder_raw_delta(mc, raw);
+    mc->encoder_reject_prev_raw = mc->encoder_raw;
+    mc->encoder_reject_raw = raw;
+    return hold_last_encoder_angle(mc);
 }
 
-static void accept_encoder_angle(uint16_t raw)
+static void accept_encoder_angle(MotorControlCState* mc, uint16_t raw)
 {
-    if (s_mc.encoder_initialized == 0U)
+    if (mc->encoder_initialized == 0U)
     {
-        s_mc.encoder_raw_step = 0;
-        s_mc.encoder_prev_raw = raw;
-        s_mc.encoder_delta = 0;
-        s_mc.encoder_initialized = 1U;
+        mc->encoder_raw_step = 0;
+        mc->encoder_prev_raw = raw;
+        mc->encoder_delta = 0;
+        mc->encoder_initialized = 1U;
     }
     else
     {
-        s_mc.encoder_raw_step = encoder_raw_delta(raw);
+        mc->encoder_raw_step = encoder_raw_delta(mc, raw);
     }
 
-    s_mc.encoder_raw = raw;
-    s_mc.encoder_elec = electrical_from_raw(raw, s_mc.command.elec_zero_trim);
-    s_mc.encoder_ok = 1U;
-    s_mc.encoder_age = 0U;
+    mc->encoder_raw = raw;
+    mc->encoder_elec = electrical_from_raw(raw, mc->command.elec_zero_trim);
+    mc->encoder_ok = 1U;
+    mc->encoder_age = 0U;
 }
 
-static int16_t current_voltage_limit(void)
+static uint8_t retry_encoder_angle(MotorControlCState* mc)
 {
-    int16_t limit = s_mc.command.current_v_limit;
+    uint16_t retry_raw;
+
+    mc->encoder_retry_count++;
+    if ((bsp_update_angle_fast() == 0U) || (bsp_angle_ok() == 0U))
+    {
+        return 0U;
+    }
+
+    retry_raw = bsp_angle_raw();
+    mc->encoder_retry_raw = retry_raw;
+    if (encoder_raw_plausible(mc, retry_raw) == 0U)
+    {
+        return 0U;
+    }
+
+    mc->encoder_retry_accept_count++;
+    accept_encoder_angle(mc, retry_raw);
+    return 1U;
+}
+
+static int16_t current_voltage_limit(const MotorControlCState* mc)
+{
+    int16_t limit = mc->command.current_v_limit;
 
     if (limit <= 0)
     {
@@ -584,14 +529,20 @@ static void reset_encoder_state(void)
     s_mc.encoder_pos = 0;
     s_mc.encoder_raw_step = 0;
     s_mc.encoder_reject_step = 0;
+    s_mc.encoder_reject_prev_raw = 0U;
     s_mc.encoder_reject_raw = 0U;
     s_mc.encoder_reject_count = 0U;
+    s_mc.encoder_retry_count = 0U;
+    s_mc.encoder_retry_accept_count = 0U;
+    s_mc.encoder_retry_raw = 0U;
     s_mc.speed_fb = 0;
     s_mc.speed_fb_diff = 0;
     s_mc.speed_fb_ma600 = 0;
+    s_mc.speed_diff_accum = 0;
     s_mc.ma600_speed_raw = 0;
     s_mc.speed_err_rpm = 0;
     s_mc.speed_iq_ref = 0;
+    s_mc.speed_diff_count = 0U;
     s_mc.encoder_age = 255U;
     s_mc.encoder_ok = 0U;
     s_mc.encoder_initialized = 0U;
@@ -614,26 +565,7 @@ static void reset_speed_loop(void)
     s_mc.speed_sample_div = 0U;
 }
 
-static void reset_align_state(void)
-{
-    s_mc.align_ticks = 0U;
-    s_mc.align_done = 0U;
-    s_mc.align_raw = 0U;
-    s_mc.align_zero_trim = 0;
-    s_mc.align_encoder_elec = 0U;
-    s_mc.align_stage = MC_ALIGN_STAGE_REV_FAST;
-    s_mc.align_halfcycles = 0U;
-    s_mc.align_theta_prev = 0;
-    s_mc.align_first_delta = 0;
-    s_mc.align_pull_delta = 0;
-    s_mc.align_sample_count = 0U;
-    s_mc.align_delta_sum = 0;
-    s_mc.open_loop_ticks = 0U;
-    s_mc.open_loop_theta = 0U;
-    s_mc.open_loop_theta_acc = 0;
-}
-
-static uint8_t update_encoder_angle(void)
+static uint8_t update_encoder_angle_state(MotorControlCState* mc)
 {
     uint8_t ok;
     uint16_t raw;
@@ -643,19 +575,28 @@ static uint8_t update_encoder_angle(void)
 
     if ((ok == 0U) || (bsp_angle_ok() == 0U))
     {
-        return hold_last_encoder_angle();
+        return hold_last_encoder_angle(mc);
     }
 
-    if (encoder_raw_plausible(raw) == 0U)
+    if (encoder_raw_plausible(mc, raw) == 0U)
     {
-        return reject_bad_encoder_angle(raw);
+        if (retry_encoder_angle(mc) != 0U)
+        {
+            return 1U;
+        }
+        return reject_bad_encoder_angle(mc, raw);
     }
 
-    accept_encoder_angle(raw);
+    accept_encoder_angle(mc, raw);
     return 1U;
 }
 
-static uint8_t update_encoder_speed(void)
+uint8_t MotorControl_InternalUpdateEncoderAngle(MotorControlCState* mc)
+{
+    return update_encoder_angle_state(mc);
+}
+
+static uint8_t update_encoder_speed_state(MotorControlCState* mc)
 {
     uint16_t raw;
     int16_t delta;
@@ -665,66 +606,83 @@ static uint8_t update_encoder_speed(void)
     int32_t speed_ma600;
 #endif
 
-    raw = s_mc.encoder_raw;
-    if (s_mc.encoder_initialized == 0U)
+    raw = mc->encoder_raw;
+    if (mc->encoder_initialized == 0U)
     {
-        s_mc.encoder_prev_raw = raw;
-        s_mc.encoder_delta = 0;
-        s_mc.encoder_initialized = 1U;
+        mc->encoder_prev_raw = raw;
+        mc->encoder_delta = 0;
+        mc->encoder_initialized = 1U;
     }
 
-    delta = (int16_t)(raw - s_mc.encoder_prev_raw);
-    s_mc.encoder_prev_raw = raw;
-    s_mc.encoder_delta = delta;
-    s_mc.encoder_pos += delta;
+    delta = (int16_t)(raw - mc->encoder_prev_raw);
+    mc->encoder_prev_raw = raw;
+    mc->encoder_delta = delta;
+    mc->encoder_pos += delta;
 
     if ((delta > -CTRL_SPD_POS_DEADBAND) && (delta < CTRL_SPD_POS_DEADBAND))
     {
         delta = 0;
     }
 
-    speed_diff = (int32_t)delta * (int32_t)CTRL_SPD_EST_HZ * (int32_t)MOT_SENSOR_DIR;
-    s_mc.speed_fb_diff += (speed_diff - s_mc.speed_fb_diff) >> CTRL_SPD_FILTER_SHIFT;
+    mc->speed_diff_accum += delta;
+    if (mc->speed_diff_count < 0xFFU)
+    {
+        mc->speed_diff_count++;
+    }
+    if (mc->speed_diff_count >= CTRL_SPD_DIFF_WINDOW_SAMPLES)
+    {
+        speed_diff = (mc->speed_diff_accum * (int32_t)CTRL_SPD_EST_HZ *
+                      (int32_t)MOT_SENSOR_DIR) /
+                     (int32_t)mc->speed_diff_count;
+        mc->speed_diff_accum = 0;
+        mc->speed_diff_count = 0U;
+        mc->speed_fb_diff += (speed_diff - mc->speed_fb_diff) >> CTRL_SPD_FILTER_SHIFT;
+    }
 
 #if (CTRL_SPD_FB_SOURCE == CTRL_SPD_FB_SOURCE_MA600)
-    s_mc.ma600_speed_raw = bsp_angle_speed_raw();
-    speed_ma600 = ma600_speed_to_counts(s_mc.ma600_speed_raw);
-    if ((speed_ma600 - s_mc.speed_fb_ma600 <=
+    mc->ma600_speed_raw = bsp_angle_speed_raw();
+    speed_ma600 = ma600_speed_to_counts(mc->ma600_speed_raw);
+    if ((speed_ma600 - mc->speed_fb_ma600 <=
          rpm_to_speed_counts_s32(CTRL_SPD_MA600_SPIKE_RPM)) &&
-        (speed_ma600 - s_mc.speed_fb_ma600 >=
+        (speed_ma600 - mc->speed_fb_ma600 >=
          -rpm_to_speed_counts_s32(CTRL_SPD_MA600_SPIKE_RPM)))
     {
-        s_mc.speed_fb_ma600 +=
-            (speed_ma600 - s_mc.speed_fb_ma600) >> CTRL_SPD_MA600_FILTER_SHIFT;
+        mc->speed_fb_ma600 +=
+            (speed_ma600 - mc->speed_fb_ma600) >> CTRL_SPD_MA600_FILTER_SHIFT;
     }
 #else
-    s_mc.ma600_speed_raw = 0;
-    s_mc.speed_fb_ma600 = 0;
+    mc->ma600_speed_raw = 0;
+    mc->speed_fb_ma600 = 0;
 #endif
 
 #if (CTRL_SPD_FB_SOURCE == CTRL_SPD_FB_SOURCE_MA600)
-    s_mc.speed_fb = s_mc.speed_fb_ma600;
+    mc->speed_fb = mc->speed_fb_ma600;
 #else
-    s_mc.speed_fb = s_mc.speed_fb_diff;
+    mc->speed_fb = mc->speed_fb_diff;
 #endif
 
-    if ((s_mc.speed_fb > -CTRL_SPD_ZERO_SNAP) && (s_mc.speed_fb < CTRL_SPD_ZERO_SNAP))
+    if ((mc->speed_fb > -CTRL_SPD_ZERO_SNAP) && (mc->speed_fb < CTRL_SPD_ZERO_SNAP))
     {
-        s_mc.speed_fb = 0;
+        mc->speed_fb = 0;
     }
     return 1U;
+}
+
+uint8_t MotorControl_InternalUpdateEncoderSpeed(MotorControlCState* mc)
+{
+    return update_encoder_speed_state(mc);
 }
 
 static void update_speed_loop(void)
 {
     const int16_t ref_rpm = speed_counts_to_rpm(s_mc.command.speed_ref);
     const int16_t fb_rpm = speed_counts_to_rpm(s_mc.speed_fb);
+    int16_t iq_target;
 
     s_mc.speed_err_rpm = (int16_t)foc_clamp_s32((int32_t)ref_rpm - (int32_t)fb_rpm,
                                                 -32768, 32767);
 
-    if ((s_mc.command.speed_ref > -CTRL_SPD_CMD_DEADBAND) &&
-        (s_mc.command.speed_ref < CTRL_SPD_CMD_DEADBAND))
+    if ((ref_rpm > -CTRL_SPD_CMD_DEADBAND_RPM) && (ref_rpm < CTRL_SPD_CMD_DEADBAND_RPM))
     {
         foc_pi_reset(&s_mc.speed_pi);
         s_mc.speed_err_rpm = 0;
@@ -735,303 +693,37 @@ static void update_speed_loop(void)
     foc_pi_set_gains(&s_mc.speed_pi, s_mc.command.speed_kp, s_mc.command.speed_ki,
                      (int16_t)-s_mc.command.iq_limit, s_mc.command.iq_limit,
                      CTRL_SPD_ERR_SHIFT);
-    s_mc.speed_iq_ref = foc_pi_update(&s_mc.speed_pi, ref_rpm, fb_rpm);
+    iq_target = foc_pi_update(&s_mc.speed_pi, ref_rpm, fb_rpm);
+    s_mc.speed_iq_ref = slew_s16(s_mc.speed_iq_ref, iq_target, CTRL_SPD_IQ_SLEW_STEP);
 }
 
-static void enter_safe_state(void)
+void MotorControl_InternalEnterSafeState(MotorControlCState* mc)
 {
     pwm_off();
-    s_mc.pwm_output = 0U;
-    s_mc.voltage_dq = (FocDq_t){0, 0};
-    s_mc.voltage_ab = (FocAlphaBeta_t){0, 0};
-    s_mc.voltage_theta = 0U;
-    s_mc.speed_iq_ref = 0;
-    s_mc.speed_err_rpm = 0;
-    s_mc.duty = (FocDuty_t){PWM_DUTY_50, PWM_DUTY_50, PWM_DUTY_50};
-    foc_pi_reset(&s_mc.speed_pi);
+    mc->pwm_output = 0U;
+    mc->voltage_dq = (FocDq_t){0, 0};
+    mc->voltage_ab = (FocAlphaBeta_t){0, 0};
+    mc->voltage_theta = 0U;
+    mc->speed_iq_ref = 0;
+    mc->speed_err_rpm = 0;
+    mc->duty = (FocDuty_t){PWM_DUTY_50, PWM_DUTY_50, PWM_DUTY_50};
+    foc_pi_reset(&mc->speed_pi);
 }
 
-static void apply_voltage_vector(int16_t vd, int16_t vq, uint16_t theta)
+void MotorControl_InternalApplyVoltageVector(MotorControlCState* mc, int16_t vd, int16_t vq,
+                                             uint16_t theta)
 {
-    const int16_t v_limit = current_voltage_limit();
+    const int16_t v_limit = current_voltage_limit(mc);
 
-    s_mc.voltage_theta = theta;
-    s_mc.voltage_dq.d = vd;
-    s_mc.voltage_dq.q = vq;
-    s_mc.voltage_limited = foc_limit_dq(&s_mc.voltage_dq, v_limit);
-    s_mc.voltage_ab = foc_inv_park(s_mc.voltage_dq, theta);
-    s_mc.duty = foc_svpwm(s_mc.voltage_ab, PWM_PERIOD, PWM_DUTY_MIN, PWM_DUTY_MAX);
-    pwm_set_duty(s_mc.duty.u, s_mc.duty.v, s_mc.duty.w);
+    mc->voltage_theta = theta;
+    mc->voltage_dq.d = vd;
+    mc->voltage_dq.q = vq;
+    mc->voltage_limited = foc_limit_dq(&mc->voltage_dq, v_limit);
+    mc->voltage_ab = foc_inv_park(mc->voltage_dq, theta);
+    mc->duty = foc_svpwm(mc->voltage_ab, PWM_PERIOD, PWM_DUTY_MIN, PWM_DUTY_MAX);
+    pwm_set_duty(mc->duty.u, mc->duty.v, mc->duty.w);
     (void)pwm_enable(1U);
-    s_mc.pwm_output = 1U;
-}
-
-static void set_align_stage(uint8_t stage)
-{
-    s_mc.align_stage = stage;
-    s_mc.align_halfcycles = 0U;
-    s_mc.align_theta_prev =
-        (int16_t)((int32_t)s_mc.open_loop_theta * (int32_t)MOT_SENSOR_DIR);
-}
-
-static uint16_t update_align_theta(int32_t speed)
-{
-    int32_t step;
-
-    step = speed * (int32_t)OL_SPEED_TO_THETA_STEP;
-    if (step >= 0)
-    {
-        step += (1L << (OL_SPEED_TO_THETA_SHIFT - 1U));
-    }
-    else
-    {
-        step -= (1L << (OL_SPEED_TO_THETA_SHIFT - 1U));
-    }
-    step >>= OL_SPEED_TO_THETA_SHIFT;
-
-    s_mc.open_loop_theta_acc += step;
-    s_mc.open_loop_theta = (uint16_t)((uint32_t)s_mc.open_loop_theta_acc & 0xFFFFUL);
-    s_mc.open_loop_ticks++;
-    return (uint16_t)((int32_t)s_mc.open_loop_theta * (int32_t)MOT_SENSOR_DIR);
-}
-
-static void count_align_halfcycle(uint16_t theta)
-{
-    const int16_t theta_now = (int16_t)theta;
-
-    if (((s_mc.align_theta_prev > 0) && (theta_now < 0)) ||
-        ((s_mc.align_theta_prev < 0) && (theta_now > 0)))
-    {
-        if (s_mc.align_halfcycles < 0xFFFFU)
-        {
-            s_mc.align_halfcycles++;
-        }
-    }
-    s_mc.align_theta_prev = theta_now;
-}
-
-static void sample_align_trim(uint16_t theta)
-{
-    const int16_t trim = align_trim_from_raw(s_mc.encoder_raw, theta);
-    int16_t delta;
-
-    s_mc.align_pull_delta = trim;
-    if (s_mc.align_sample_count == 0U)
-    {
-        s_mc.align_first_delta = trim;
-        s_mc.align_delta_sum = 0;
-        s_mc.align_sample_count = 1U;
-        return;
-    }
-
-    delta = (int16_t)((uint16_t)trim - (uint16_t)s_mc.align_first_delta);
-    s_mc.align_delta_sum += (int32_t)delta;
-    if (s_mc.align_sample_count < 0xFFFFU)
-    {
-        s_mc.align_sample_count++;
-    }
-}
-
-static void finish_align_scan(void)
-{
-    int32_t average = s_mc.align_first_delta;
-
-    if (s_mc.align_sample_count > 1U)
-    {
-        average += s_mc.align_delta_sum / (int32_t)(s_mc.align_sample_count - 1U);
-    }
-
-    s_mc.align_zero_trim = (int16_t)average;
-    s_mc.align_done = 1U;
-    set_align_stage(MC_ALIGN_STAGE_DONE);
-}
-
-static void run_align_fast_loop(void)
-{
-    int32_t speed = 0;
-    uint16_t theta;
-
-    s_mc.current.u = curr_u();
-    s_mc.current.v = curr_v();
-    s_mc.current.w = curr_w();
-    if (current_ok() == 0U)
-    {
-        s_mc.state = MC_STATE_FAULT;
-        s_mc.fault = MC_FAULT_CURRENT;
-        enter_safe_state();
-        return;
-    }
-
-    if (++s_mc.current_loop_div < CTRL_FAST_LOOP_DIV)
-    {
-        return;
-    }
-    s_mc.current_loop_div = 0U;
-
-    if (s_mc.align_done != 0U)
-    {
-        apply_voltage_vector(0, 0, s_mc.voltage_theta);
-        s_mc.fast_loop_count++;
-        return;
-    }
-
-    if (s_mc.align_stage == MC_ALIGN_STAGE_REV_FAST)
-    {
-        speed = -MOT_ALIGN_SCAN_FAST_SPEED;
-    }
-    else if (s_mc.align_stage == MC_ALIGN_STAGE_FWD_FAST)
-    {
-        speed = MOT_ALIGN_SCAN_FAST_SPEED;
-    }
-    else if (s_mc.align_stage == MC_ALIGN_STAGE_FWD_SAMPLE)
-    {
-        speed = MOT_ALIGN_SCAN_SLOW_SPEED;
-    }
-    else if (s_mc.align_stage == MC_ALIGN_STAGE_REV_SAMPLE)
-    {
-        speed = -MOT_ALIGN_SCAN_SLOW_SPEED;
-    }
-    else
-    {
-        finish_align_scan();
-        s_mc.fast_loop_count++;
-        return;
-    }
-
-    theta = update_align_theta(speed);
-    apply_voltage_vector(MOT_ALIGN_SCAN_VD, 0, theta);
-
-    if (update_encoder_angle() != 0U)
-    {
-        s_mc.align_raw = s_mc.encoder_raw;
-        s_mc.align_encoder_elec = s_mc.encoder_elec;
-        if ((s_mc.align_stage == MC_ALIGN_STAGE_FWD_SAMPLE) ||
-            (s_mc.align_stage == MC_ALIGN_STAGE_REV_SAMPLE))
-        {
-            sample_align_trim(theta);
-        }
-    }
-
-    if (s_mc.align_ticks < 0xFFFFFFFFUL)
-    {
-        s_mc.align_ticks++;
-    }
-
-    count_align_halfcycle(theta);
-
-    if ((s_mc.align_stage == MC_ALIGN_STAGE_REV_FAST) &&
-        (s_mc.align_halfcycles >= MOT_ALIGN_SCAN_REV_FAST_HALFCYCLES))
-    {
-        set_align_stage(MC_ALIGN_STAGE_FWD_FAST);
-    }
-    else if ((s_mc.align_stage == MC_ALIGN_STAGE_FWD_FAST) &&
-             (s_mc.align_halfcycles >= MOT_ALIGN_SCAN_FWD_FAST_HALFCYCLES))
-    {
-        set_align_stage(MC_ALIGN_STAGE_FWD_SAMPLE);
-    }
-    else if ((s_mc.align_stage == MC_ALIGN_STAGE_FWD_SAMPLE) &&
-             (s_mc.align_halfcycles >= MOT_ALIGN_SCAN_SAMPLE_HALFCYCLES) &&
-             (s_mc.align_sample_count >= MOT_ALIGN_SCAN_MIN_SAMPLES))
-    {
-        set_align_stage(MC_ALIGN_STAGE_REV_SAMPLE);
-    }
-    else if ((s_mc.align_stage == MC_ALIGN_STAGE_REV_SAMPLE) &&
-             (s_mc.align_halfcycles >= MOT_ALIGN_SCAN_SAMPLE_HALFCYCLES) &&
-             (s_mc.align_sample_count >= MOT_ALIGN_SCAN_MIN_SAMPLES))
-    {
-        finish_align_scan();
-    }
-
-    s_mc.fast_loop_count++;
-}
-
-static void run_vf_fast_loop(void)
-{
-    uint16_t theta;
-
-    s_mc.current.u = curr_u();
-    s_mc.current.v = curr_v();
-    s_mc.current.w = curr_w();
-    if (current_ok() == 0U)
-    {
-        s_mc.state = MC_STATE_FAULT;
-        s_mc.fault = MC_FAULT_CURRENT;
-        enter_safe_state();
-        return;
-    }
-
-    if ((s_mc.open_loop_timeout_ticks > 0U) &&
-        (s_mc.open_loop_ticks >= s_mc.open_loop_timeout_ticks))
-    {
-        s_mc.state = MC_STATE_FAULT;
-        s_mc.fault = MC_FAULT_OPEN_LOOP_TIMEOUT;
-        enter_safe_state();
-        return;
-    }
-
-    theta = update_open_loop_theta();
-    if (++s_mc.speed_sample_div >= MC_SPEED_SAMPLE_DIV)
-    {
-        s_mc.speed_sample_div = 0U;
-        if (update_encoder_angle() != 0U)
-        {
-            (void)update_encoder_speed();
-        }
-    }
-    apply_voltage_vector(0,s_mc.command.vf_voltage,  theta);
-    s_mc.fast_loop_count++;
-}
-
-static void run_encoder_voltage_fast_loop(void)
-{
-    FocAlphaBeta_t current_ab;
-    uint16_t voltage_theta;
-
-    s_mc.current.u = curr_u();
-    s_mc.current.v = curr_v();
-    s_mc.current.w = curr_w();
-    if (current_ok() == 0U)
-    {
-        s_mc.state = MC_STATE_FAULT;
-        s_mc.fault = MC_FAULT_CURRENT;
-        enter_safe_state();
-        return;
-    }
-
-    if (++s_mc.current_loop_div < CTRL_FAST_LOOP_DIV)
-    {
-        return;
-    }
-    s_mc.current_loop_div = 0U;
-
-    if (update_encoder_angle() == 0U)
-    {
-        s_mc.state = MC_STATE_FAULT;
-        s_mc.fault = MC_FAULT_ENCODER;
-        enter_safe_state();
-
-        return;
-    }
-
-    if (++s_mc.speed_sample_div >= MC_SPEED_SAMPLE_DIV)
-    {
-        s_mc.speed_sample_div = 0U;
-        if (update_encoder_speed() == 0U)
-        {
-            s_mc.state = MC_STATE_FAULT;
-            s_mc.fault = MC_FAULT_ENCODER;
-            enter_safe_state();
-            return;
-        }
-    }
-
-    s_mc.id_ref_active = s_mc.command.id_ref;
-    s_mc.iq_ref_active = s_mc.command.iq_ref;
-    voltage_theta = (uint16_t)(s_mc.encoder_elec + (uint16_t)s_mc.command.voltage_theta_offset);
-    current_ab = foc_clarke_3phase(s_mc.current);
-    s_mc.current_dq = foc_park(current_ab, voltage_theta);
-    apply_voltage_vector(s_mc.command.id_ref, s_mc.command.iq_ref, voltage_theta);
-    s_mc.fast_loop_count++;
+    mc->pwm_output = 1U;
 }
 
 static void run_current_fast_loop(uint8_t speed_mode)
@@ -1048,7 +740,7 @@ static void run_current_fast_loop(uint8_t speed_mode)
     {
         s_mc.state = MC_STATE_FAULT;
         s_mc.fault = MC_FAULT_CURRENT;
-        enter_safe_state();
+        MotorControl_InternalEnterSafeState(&s_mc);
         return;
     }
 
@@ -1058,11 +750,11 @@ static void run_current_fast_loop(uint8_t speed_mode)
     }
     s_mc.current_loop_div = 0U;
 
-    if (update_encoder_angle() == 0U)
+    if (MotorControl_InternalUpdateEncoderAngle(&s_mc) == 0U)
     {
         s_mc.state = MC_STATE_FAULT;
         s_mc.fault = MC_FAULT_ENCODER;
-        enter_safe_state();
+        MotorControl_InternalEnterSafeState(&s_mc);
         return;
     }
 
@@ -1071,11 +763,11 @@ static void run_current_fast_loop(uint8_t speed_mode)
         if (++s_mc.speed_sample_div >= MC_SPEED_SAMPLE_DIV)
         {
             s_mc.speed_sample_div = 0U;
-            if (update_encoder_speed() == 0U)
+            if (MotorControl_InternalUpdateEncoderSpeed(&s_mc) == 0U)
             {
                 s_mc.state = MC_STATE_FAULT;
                 s_mc.fault = MC_FAULT_ENCODER;
-                enter_safe_state();
+                MotorControl_InternalEnterSafeState(&s_mc);
                 return;
             }
             update_speed_loop();
@@ -1100,7 +792,7 @@ static void run_current_fast_loop(uint8_t speed_mode)
     current_ab = foc_clarke_3phase(s_mc.current);
     s_mc.current_dq = foc_park(current_ab, theta_used);
 
-    v_limit = current_voltage_limit();
+    v_limit = current_voltage_limit(&s_mc);
     foc_pi_set_gains(&s_mc.current_pi_d, s_mc.command.current_kp, s_mc.command.current_ki,
                      (int16_t)-v_limit, v_limit, CTRL_CUR_PI_SHIFT);
     foc_pi_set_gains(&s_mc.current_pi_q, s_mc.command.current_kp, s_mc.command.current_ki,
@@ -1108,25 +800,9 @@ static void run_current_fast_loop(uint8_t speed_mode)
 
     s_mc.voltage_dq.d = foc_pi_update(&s_mc.current_pi_d, s_mc.id_ref_active, s_mc.current_dq.d);
     s_mc.voltage_dq.q = foc_pi_update(&s_mc.current_pi_q, s_mc.iq_ref_active, s_mc.current_dq.q);
-    s_mc.voltage_limited = foc_limit_dq(&s_mc.voltage_dq, v_limit);
-    s_mc.voltage_theta = theta_used;
-    s_mc.voltage_ab = foc_inv_park(s_mc.voltage_dq, theta_used);
-    s_mc.duty = foc_svpwm(s_mc.voltage_ab, PWM_PERIOD, PWM_DUTY_MIN, PWM_DUTY_MAX);
-    pwm_set_duty(s_mc.duty.u, s_mc.duty.v, s_mc.duty.w);
-    (void)pwm_enable(1U);
-    s_mc.pwm_output = 1U;
+    MotorControl_InternalApplyVoltageVector(&s_mc, s_mc.voltage_dq.d, s_mc.voltage_dq.q,
+                                            theta_used);
     s_mc.fast_loop_count++;
-}
-
-static uint16_t update_open_loop_theta(void)
-{
-    int32_t step = (s_mc.command.open_loop_speed_ref * (int32_t)OL_SPEED_TO_THETA_STEP +
-                    (1L << (OL_SPEED_TO_THETA_SHIFT - 1U))) >>
-                   OL_SPEED_TO_THETA_SHIFT;
-    s_mc.open_loop_theta_acc += step;
-    s_mc.open_loop_theta = (uint16_t)((uint32_t)s_mc.open_loop_theta_acc & 0xFFFFUL);
-    s_mc.open_loop_ticks++;
-    return (uint16_t)((int32_t)s_mc.open_loop_theta * (int32_t)MOT_SENSOR_DIR);
 }
 
 static void fill_watch(MotorControlWatch_t* out)
@@ -1153,38 +829,16 @@ static void fill_watch(MotorControlWatch_t* out)
     out->encoder_pos = s_mc.encoder_pos;
     out->encoder_age = s_mc.encoder_age;
     out->encoder_ok = s_mc.encoder_ok;
-    out->encoder_raw_step = s_mc.encoder_raw_step;
-    out->encoder_reject_step = s_mc.encoder_reject_step;
-    out->encoder_reject_raw = s_mc.encoder_reject_raw;
-    out->encoder_reject_count = s_mc.encoder_reject_count;
-    out->align_done = s_mc.align_done;
-    out->align_ticks = s_mc.align_ticks;
-    out->align_theta = (uint16_t)MOT_ALIGN_THETA;
-    out->align_raw = s_mc.align_raw;
-    out->align_zero_trim = s_mc.align_zero_trim;
-    out->align_encoder_elec = s_mc.align_encoder_elec;
-    out->align_stage = s_mc.align_stage;
-    out->align_pull_delta = s_mc.align_pull_delta;
-    out->align_sample_count = s_mc.align_sample_count;
-    out->align_delta_sum = s_mc.align_delta_sum;
     out->iu_cnt = curr_u();
     out->iv_cnt = curr_v();
     out->iw_cnt = curr_w();
     out->i_sum = curr_sum();
     out->id_ref = s_mc.id_ref_active;
     out->iq_ref = s_mc.iq_ref_active;
-    out->speed_ref =
-        (s_mc.mode == MC_MODE_SPEED) ? s_mc.command.speed_ref : s_mc.command.open_loop_speed_ref;
-    out->speed_ref_rpm = (s_mc.mode == MC_MODE_SPEED) ? speed_counts_to_rpm(s_mc.command.speed_ref)
-                                                       : 0;
+    out->speed_ref = s_mc.command.speed_ref;
+    out->speed_ref_rpm = speed_counts_to_rpm(s_mc.command.speed_ref);
     out->speed_fb = s_mc.speed_fb;
     out->speed_fb_rpm = speed_counts_to_rpm(s_mc.speed_fb);
-    out->speed_fb_diff = s_mc.speed_fb_diff;
-    out->speed_fb_diff_rpm = speed_counts_to_rpm(s_mc.speed_fb_diff);
-    out->speed_fb_ma600 = s_mc.speed_fb_ma600;
-    out->speed_fb_ma600_rpm = speed_counts_to_rpm(s_mc.speed_fb_ma600);
-    out->ma600_speed_raw = s_mc.ma600_speed_raw;
-    out->speed_fb_source = CTRL_SPD_FB_SOURCE;
     out->speed_err_rpm = s_mc.speed_err_rpm;
     out->speed_iq_cmd = s_mc.speed_iq_ref;
     out->speed_pi_integral = s_mc.speed_pi.integral;
@@ -1200,17 +854,11 @@ static void fill_watch(MotorControlWatch_t* out)
     out->pwm_safe = pwm_is_safe();
     out->pwm_running = (uint8_t)((pwm_out != 0U) && (pwm_is_running() != 0U));
     out->check = s_mc.check;
-    out->command_apply_count = s_mc.command_apply_count;
-    out->command_enable = s_mc.command.enable;
-    out->command_control_mode = s_mc.command.control_mode;
-    out->command_vf_voltage = s_mc.command.vf_voltage;
-    out->command_open_loop_speed_ref = s_mc.command.open_loop_speed_ref;
-    out->command_speed_ref_rpm = s_mc.command.speed_ref_rpm;
-    out->command_iq_limit = s_mc.command.iq_limit;
-    out->command_current_v_limit = s_mc.command.current_v_limit;
-    out->command_voltage_theta_offset = s_mc.command.voltage_theta_offset;
-    out->command_speed_kp = s_mc.command.speed_kp;
-    out->command_speed_ki = s_mc.command.speed_ki;
+}
+
+static void fill_diag_watch(MotorControlDiagWatch_t* out)
+{
+    MotorControlDiag_FillWatch(&s_mc, out);
 }
 
 static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
@@ -1229,20 +877,6 @@ static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
     dst->encoder_pos = src->encoder_pos;
     dst->encoder_age = src->encoder_age;
     dst->encoder_ok = src->encoder_ok;
-    dst->encoder_raw_step = src->encoder_raw_step;
-    dst->encoder_reject_step = src->encoder_reject_step;
-    dst->encoder_reject_raw = src->encoder_reject_raw;
-    dst->encoder_reject_count = src->encoder_reject_count;
-    dst->align_done = src->align_done;
-    dst->align_ticks = src->align_ticks;
-    dst->align_theta = src->align_theta;
-    dst->align_raw = src->align_raw;
-    dst->align_zero_trim = src->align_zero_trim;
-    dst->align_encoder_elec = src->align_encoder_elec;
-    dst->align_stage = src->align_stage;
-    dst->align_pull_delta = src->align_pull_delta;
-    dst->align_sample_count = src->align_sample_count;
-    dst->align_delta_sum = src->align_delta_sum;
     dst->iu_cnt = src->iu_cnt;
     dst->iv_cnt = src->iv_cnt;
     dst->iw_cnt = src->iw_cnt;
@@ -1253,12 +887,6 @@ static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
     dst->speed_ref_rpm = src->speed_ref_rpm;
     dst->speed_fb = src->speed_fb;
     dst->speed_fb_rpm = src->speed_fb_rpm;
-    dst->speed_fb_diff = src->speed_fb_diff;
-    dst->speed_fb_diff_rpm = src->speed_fb_diff_rpm;
-    dst->speed_fb_ma600 = src->speed_fb_ma600;
-    dst->speed_fb_ma600_rpm = src->speed_fb_ma600_rpm;
-    dst->ma600_speed_raw = src->ma600_speed_raw;
-    dst->speed_fb_source = src->speed_fb_source;
     dst->speed_err_rpm = src->speed_err_rpm;
     dst->speed_iq_cmd = src->speed_iq_cmd;
     dst->speed_pi_integral = src->speed_pi_integral;
@@ -1277,6 +905,39 @@ static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
     dst->check.current_ok = src->check.current_ok;
     dst->check.pwm_off_safe = src->check.pwm_off_safe;
     dst->check.ready_closed_loop = src->check.ready_closed_loop;
+}
+
+static void copy_diag_watch_to_volatile(volatile MotorControlDiagWatch_t* dst,
+                                        const MotorControlDiagWatch_t* src)
+{
+    dst->open_loop_reset_count = src->open_loop_reset_count;
+    dst->open_loop_ticks = src->open_loop_ticks;
+    dst->open_loop_theta = src->open_loop_theta;
+    dst->voltage_theta = src->voltage_theta;
+    dst->encoder_raw_step = src->encoder_raw_step;
+    dst->encoder_reject_step = src->encoder_reject_step;
+    dst->encoder_reject_prev_raw = src->encoder_reject_prev_raw;
+    dst->encoder_reject_raw = src->encoder_reject_raw;
+    dst->encoder_reject_count = src->encoder_reject_count;
+    dst->encoder_retry_count = src->encoder_retry_count;
+    dst->encoder_retry_accept_count = src->encoder_retry_accept_count;
+    dst->encoder_retry_raw = src->encoder_retry_raw;
+    dst->align_done = src->align_done;
+    dst->align_ticks = src->align_ticks;
+    dst->align_theta = src->align_theta;
+    dst->align_raw = src->align_raw;
+    dst->align_zero_trim = src->align_zero_trim;
+    dst->align_encoder_elec = src->align_encoder_elec;
+    dst->align_stage = src->align_stage;
+    dst->align_pull_delta = src->align_pull_delta;
+    dst->align_sample_count = src->align_sample_count;
+    dst->align_delta_sum = src->align_delta_sum;
+    dst->speed_fb_diff = src->speed_fb_diff;
+    dst->speed_fb_diff_rpm = src->speed_fb_diff_rpm;
+    dst->speed_fb_ma600 = src->speed_fb_ma600;
+    dst->speed_fb_ma600_rpm = src->speed_fb_ma600_rpm;
+    dst->ma600_speed_raw = src->ma600_speed_raw;
+    dst->speed_fb_source = src->speed_fb_source;
     dst->command_apply_count = src->command_apply_count;
     dst->command_enable = src->command_enable;
     dst->command_control_mode = src->command_control_mode;

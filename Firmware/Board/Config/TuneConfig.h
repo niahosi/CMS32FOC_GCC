@@ -141,24 +141,28 @@
 #define CTRL_SPD_MA600_SPIKE_RPM 300
 /** @brief MA600 speed 原始低通滤波右移，值越大越平滑。 */
 #define CTRL_SPD_MA600_FILTER_SHIFT 5u
+/** @brief 角度差分测速累计窗口，500 Hz 下 4 点约 8 ms。 */
+#define CTRL_SPD_DIFF_WINDOW_SAMPLES 4u
 /** @brief 速度估算位置死区。 */
 #define CTRL_SPD_POS_DEADBAND 16L
 /** @brief 速度反馈归零吸附阈值。 */
 #define CTRL_SPD_ZERO_SNAP 500L
-/** @brief 速度环比例系数，PI 输入为 rpm 误差。 */
-#define CTRL_SPD_KP 128
-/** @brief 速度环积分系数，初调时先关闭积分，确认方向后再在 Ozone 中加到 1。 */
-#define CTRL_SPD_KI 4
+/** @brief 速度环比例系数，PI 输入为 rpm 误差；默认 1 iq/rpm。 */
+#define CTRL_SPD_KP 64
+/** @brief 速度环积分系数，初调默认关闭积分，确认方向后再在 Ozone 中逐步加到 1。 */
+#define CTRL_SPD_KI 0
 /** @brief 速度误差缩放右移位数。 */
 #define CTRL_SPD_ERR_SHIFT 6u
 /** @brief 速度反馈滤波右移位数。 */
-#define CTRL_SPD_FILTER_SHIFT 4u
-/** @brief 速度给定小于该值时认为是停机命令，防止零速抖动。 */
-#define CTRL_SPD_CMD_DEADBAND 200L
+#define CTRL_SPD_FILTER_SHIFT 3u
+/** @brief 速度给定小于该 rpm 时认为是停机命令，防止零速抖动。 */
+#define CTRL_SPD_CMD_DEADBAND_RPM 5
 /** @brief 速度给定限幅。 */
 #define CTRL_SPD_REF_LIMIT 3000000L
-/** @brief 速度环默认 iq 限幅。 */
-#define CTRL_SPD_IQ_LIMIT 80
+/** @brief 速度环默认 iq 限幅；速度环初调先用低扭矩上限，确认稳定后再上调。 */
+#define CTRL_SPD_IQ_LIMIT 30
+/** @brief 速度环输出 iq 命令每个 500 Hz 速度周期允许变化的最大 count。 */
+#define CTRL_SPD_IQ_SLEW_STEP 1
 
 /* Open loop VF/IF --------------------------------------------------------- */
 

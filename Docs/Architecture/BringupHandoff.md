@@ -43,8 +43,12 @@
 - 反推 `k ~= 3.31`，仍低于手册提醒的 BCT 200 温漂警戒区。
 - 32 点残差表工具已实现，但当前建议保持 32 点表全 0。
 - 原因：没有独立参考角度，也不能保证机械恒速。用当前电机自身 VF/闭环数据做 32 点表，容易把真实速度波动写进 MA600 校准。
+- MA600 主驱动现在只保留 init、angle/speed read、cache 和 register read/write；BCT/CORR/NVM 在线调参变量与 service 已移到 `Firmware/Board/Src/foc_ma600_diag.c`。
+- `bsp_service_slow()` 调用 `ma600_diag_service()`；普通快环读角只通过 `ma600_diag_busy()` 避开正在进行的调参写操作。
 
 ### MA600 在线调参变量
+
+以下变量仍可在 Ozone 中观察/写入，但现在属于 `foc_ma600_diag.c/.h`，不再放在 `foc_ma600.c/.h` 主驱动接口里。
 
 BCT 在线写 RAM：
 
@@ -100,16 +104,29 @@ g_ma600_nvm_ok
   - `MOT_ENCODER_MAX_STEP_RAW = 8192`
   - `MOT_ANGLE_MAX_AGE = 4`
   - 监控 `encoder_raw_step`, `encoder_reject_step`, `encoder_reject_raw`, `encoder_reject_count`
+  - 碰到坏角会立即重读一次 16-bit angle frame；监控 `encoder_retry_count` 和 `encoder_retry_accept_count` 判断是否为单帧 SPI 坏读。
 
 ## 当前控制模式注意点
 
+- `control_mode = 1/2` 是干净主线，在 `motor_control_c.c` 中直接实现 Current/Speed。
+- `control_mode = 3/4/5` 是诊断模式，统一转发到 `motor_control_diag.c`：
+  - `3` VF
+  - `4` Align
+  - `5` EncoderVoltage
+- VF 运行中的开环角只能在明确切入 VF/Align 或初始化时重置；慢环状态重入不得重置开环角。观察 `g_motor_diag_watch.open_loop_reset_count`，VF 稳定运行时它不应持续增加。
 - `run_vf_fast_loop()` 当前实际调用：
 
 ```c
-apply_voltage_vector(0, s_mc.command.vf_voltage, theta);
+MotorControl_InternalApplyVoltageVector(mc, 0, mc->command.vf_voltage, theta);
 ```
 
 也就是 VF 开环电压放在 q 轴参数，不是之前讨论过的 d 轴参数。接手时必须按代码当前状态判断，不要按旧口头结论假设。
+
+## Watch 分工
+
+- `g_motor_watch` 是主线 watch：`state/fault/mode`、电流 dq、Current/Speed refs、速度反馈、PI 输出、`vd/vq`、`voltage_theta`、duty、PWM/check、少量 encoder 基础状态。
+- `g_motor_diag_watch` 是诊断 watch：VF/Align 状态、坏角 reject/retry、差分测速与 MA600 speed 对比、命令镜像。
+- Current/Speed 模式不依赖诊断 watch 才能运行；诊断 watch 只是观察入口。
 
 - 电流环：
   - `CTRL_CUR_KP = 4`
@@ -121,12 +138,14 @@ apply_voltage_vector(0, s_mc.command.vf_voltage, theta);
 - 速度环当前配置：
   - `CTRL_SPD_EST_HZ = 500`
   - `CTRL_SPD_FB_SOURCE = CTRL_SPD_FB_SOURCE_DIFF`
-  - `CTRL_SPD_KP = 128`
-  - `CTRL_SPD_KI = 4`
+  - `CTRL_SPD_KP = 64`
+  - `CTRL_SPD_KI = 0`
   - `CTRL_SPD_ERR_SHIFT = 6`
-  - `CTRL_SPD_FILTER_SHIFT = 4`
-  - `CTRL_SPD_CMD_DEADBAND = 200`
-  - `CTRL_SPD_IQ_LIMIT = 80`
+  - `CTRL_SPD_FILTER_SHIFT = 3`
+  - `CTRL_SPD_DIFF_WINDOW_SAMPLES = 4`
+  - `CTRL_SPD_CMD_DEADBAND_RPM = 5`
+  - `CTRL_SPD_IQ_LIMIT = 30`
+  - `CTRL_SPD_IQ_SLEW_STEP = 1`
 
 ## 速度环下一步建议
 
@@ -135,15 +154,16 @@ apply_voltage_vector(0, s_mc.command.vf_voltage, theta);
    - 看 `iq` 是否贴近、`id` 是否小、母线电流是否可控
 2. 再低速进入 speed mode：
    - 先用很小速度给定，避免直接打满 `iq_limit`
-   - 建议先将 `g_motor_cmd.iq_limit` 设为 20 或 30，而不是默认 80
+   - 默认 `g_motor_cmd.iq_limit = 30`，初调时也可以临时降到 20
    - 观察 `speed_ref_rpm`, `speed_fb_rpm`, `speed_err_rpm`, `speed_iq_cmd`, `iq`
 3. 判断方向：
    - 若速度给定为正，`speed_fb_rpm` 也应为正
    - 若方向相反，先不要调 PI，优先修 `MOT_SENSOR_DIR` 或速度符号
 4. 初调速度 PI：
-   - 先降低积分影响，必要时在 Ozone 中把 `speed_ki` 设小或 0
+   - 默认 `speed_ki = 0`，此时 PI 积分保持清零，先只调 `speed_kp`
    - 先调 `speed_kp`，让速度能跟随但不过冲
    - 再慢慢加 `speed_ki` 消除稳态误差
+   - 若 `speed_iq_cmd` 正负打满，先降低 `speed_kp/speed_ki` 或减小 `iq_limit`，不要继续放开扭矩上限
 5. 速度闭环不稳时先看角度质量：
    - `encoder_reject_count` 是否增加
    - `encoder_raw_step` 是否有周期性尖峰
@@ -162,6 +182,6 @@ apply_voltage_vector(0, s_mc.command.vf_voltage, theta);
 
 ```text
 cmake --build --preset gcc-debug --target cms32foc
-Flash image: 29952 bytes, 45.7%
-RAM total: 4824 bytes, 58.9%
+Flash image: 30816 bytes, 47.0%
+RAM total: 4848 bytes, 59.2%
 ```

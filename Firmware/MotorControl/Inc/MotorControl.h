@@ -20,11 +20,14 @@ typedef struct
     int16_t speed_kp;
     int16_t speed_ki;
     int16_t current_v_limit;
+    /* Diagnostic modes: VF open-loop speed command. */
     int32_t open_loop_speed_ref;
+    /* Diagnostic modes: VF open-loop voltage command. */
     int16_t vf_voltage;
     int16_t if_id_ref;
     int16_t if_iq_ref;
     uint16_t open_loop_timeout_ms;
+    /* Bring-up trim fields for encoder/voltage diagnostic modes. */
     int16_t elec_zero_trim;
     int16_t voltage_theta_offset;
 } MotorControlCommand_t;
@@ -52,20 +55,6 @@ typedef struct
     int32_t encoder_pos;
     uint8_t encoder_age;
     uint8_t encoder_ok;
-    int16_t encoder_raw_step;
-    int16_t encoder_reject_step;
-    uint16_t encoder_reject_raw;
-    uint32_t encoder_reject_count;
-    uint8_t align_done;
-    uint32_t align_ticks;
-    uint16_t align_theta;
-    uint16_t align_raw;
-    int16_t align_zero_trim;
-    uint16_t align_encoder_elec;
-    uint8_t align_stage;
-    int16_t align_pull_delta;
-    uint16_t align_sample_count;
-    int32_t align_delta_sum;
     int16_t iu_cnt;
     int16_t iv_cnt;
     int16_t iw_cnt;
@@ -76,12 +65,6 @@ typedef struct
     int16_t speed_ref_rpm;
     int32_t speed_fb;
     int16_t speed_fb_rpm;
-    int32_t speed_fb_diff;
-    int16_t speed_fb_diff_rpm;
-    int32_t speed_fb_ma600;
-    int16_t speed_fb_ma600_rpm;
-    int16_t ma600_speed_raw;
-    uint8_t speed_fb_source;
     int16_t speed_err_rpm;
     int16_t speed_iq_cmd;
     int32_t speed_pi_integral;
@@ -97,6 +80,38 @@ typedef struct
     uint8_t pwm_safe;
     uint8_t pwm_running;
     MotorControlCheck_t check;
+} MotorControlWatch_t;
+
+typedef struct
+{
+    uint32_t open_loop_reset_count;
+    uint32_t open_loop_ticks;
+    uint16_t open_loop_theta;
+    uint16_t voltage_theta;
+    int16_t encoder_raw_step;
+    int16_t encoder_reject_step;
+    uint16_t encoder_reject_prev_raw;
+    uint16_t encoder_reject_raw;
+    uint32_t encoder_reject_count;
+    uint32_t encoder_retry_count;
+    uint32_t encoder_retry_accept_count;
+    uint16_t encoder_retry_raw;
+    uint8_t align_done;
+    uint32_t align_ticks;
+    uint16_t align_theta;
+    uint16_t align_raw;
+    int16_t align_zero_trim;
+    uint16_t align_encoder_elec;
+    uint8_t align_stage;
+    int16_t align_pull_delta;
+    uint16_t align_sample_count;
+    int32_t align_delta_sum;
+    int32_t speed_fb_diff;
+    int16_t speed_fb_diff_rpm;
+    int32_t speed_fb_ma600;
+    int16_t speed_fb_ma600_rpm;
+    int16_t ma600_speed_raw;
+    uint8_t speed_fb_source;
     uint32_t command_apply_count;
     uint8_t command_enable;
     uint8_t command_control_mode;
@@ -108,7 +123,7 @@ typedef struct
     int16_t command_voltage_theta_offset;
     int16_t command_speed_kp;
     int16_t command_speed_ki;
-} MotorControlWatch_t;
+} MotorControlDiagWatch_t;
 
 void MotorControl_Init(void);
 void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command);
@@ -116,6 +131,8 @@ void MotorControl_RunSlowLoop(void);
 uint8_t MotorControl_FastLoopFromAdcIrq(void);
 void MotorControl_GetWatch(MotorControlWatch_t* out);
 void MotorControl_UpdateWatch(volatile MotorControlWatch_t* out);
+void MotorControl_GetDiagWatch(MotorControlDiagWatch_t* out);
+void MotorControl_UpdateDiagWatch(volatile MotorControlDiagWatch_t* out);
 
 #ifdef __cplusplus
 }

@@ -211,6 +211,17 @@ int16_t foc_pi_update(FocPi_t* pi, int16_t ref, int16_t feedback)
     }
 
     pi->error = (int16_t)foc_clamp_s32((int32_t)ref - (int32_t)feedback, -32768, 32767);
+    if (pi->ki == 0)
+    {
+        pi->integral = 0;
+        output_raw = (int32_t)pi->kp * pi->error;
+        output_unclamped = scale_down_s32(output_raw, pi->shift);
+        output = foc_clamp_s32(output_unclamped, pi->output_min, pi->output_max);
+        pi->output = (int16_t)output;
+        pi->error_prev = pi->error;
+        return pi->output;
+    }
+
     integral_new = foc_clamp_s32(pi->integral + pi->error, -FOC_PI_INTEGRAL_LIMIT,
                                  FOC_PI_INTEGRAL_LIMIT);
 
@@ -218,7 +229,7 @@ int16_t foc_pi_update(FocPi_t* pi, int16_t ref, int16_t feedback)
     output_unclamped = scale_down_s32(output_raw, pi->shift);
     output = foc_clamp_s32(output_unclamped, pi->output_min, pi->output_max);
 
-    if ((output == output_unclamped) || (pi->ki == 0) ||
+    if ((output == output_unclamped) ||
         ((output_unclamped > pi->output_max) && (pi->error < 0)) ||
         ((output_unclamped < pi->output_min) && (pi->error > 0)))
     {

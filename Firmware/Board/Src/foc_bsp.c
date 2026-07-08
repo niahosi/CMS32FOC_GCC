@@ -6,6 +6,7 @@
 #include "foc_bsp.h"
 #include "foc_curr.h"
 #include "foc_ma600.h"
+#include "foc_ma600_diag.h"
 #include "foc_pwm.h"
 #include "CMS32M6510.h"
 #include "delay.h"
@@ -83,7 +84,7 @@ uint16_t bsp_read_angle(void)
 
 void bsp_service_slow(void)
 {
-    ma600_service_config();
+    ma600_diag_service();
 }
 
 /**
