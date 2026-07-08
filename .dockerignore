@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!.dockerignore
+!scripts/
+!scripts/docker-build.sh
+!scripts/docker-export.sh

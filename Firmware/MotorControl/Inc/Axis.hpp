@@ -47,6 +47,11 @@ private:
     AxisState state_ = AxisState::Idle;
     uint32_t slow_loop_count_ = 0;
     uint32_t fast_loop_count_ = 0;
+    uint32_t command_apply_count_ = 0;
+    uint8_t command_enable_ = 0;
+    uint8_t command_control_mode_ = 0;
+    int16_t command_vf_voltage_ = 0;
+    int32_t command_open_loop_speed_ref_ = 0;
     uint8_t ma600_good_samples_ = 0;
     MotorControlCheck_t check_{};
     MotorFault fault_ = MotorFault::None;

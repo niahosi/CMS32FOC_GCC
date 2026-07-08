@@ -1,8 +1,0 @@
-{
-  "recommendations": [
-    "llvm-vs-code-extensions.vscode-clangd",
-    "ms-vscode.cmake-tools",
-    "pkief.material-icon-theme",
-    "ms-vscode.hexeditor"
-  ]
-}

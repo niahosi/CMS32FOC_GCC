@@ -98,10 +98,7 @@
       "type": "pickString",
       "description": "Select firmware to flash",
       "options": [
-        "cms32foc",
-        "cms32_board_watch_test",
-        "cms32_cpp_smoke_test",
-        "cms32_startup_smoke_test"
+        "cms32foc"
       ],
       "default": "cms32foc"
     }

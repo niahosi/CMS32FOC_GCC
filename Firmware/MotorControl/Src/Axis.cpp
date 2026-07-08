@@ -1,7 +1,7 @@
 #include "Axis.hpp"
+#include "Config.h"
 
 extern "C" {
-#include "Config.h"
 #include "foc_pwm.h"
 }
 
@@ -22,6 +22,12 @@ void Axis::init()
 
 void Axis::applyCommand(const volatile MotorControlCommand_t& command)
 {
+    command_apply_count_++;
+    command_enable_ = command.enable;
+    command_control_mode_ = command.control_mode;
+    command_vf_voltage_ = command.vf_voltage;
+    command_open_loop_speed_ref_ = command.open_loop_speed_ref;
+
     controller_.applyCommand(command);
     encoder_.setZeroTrim(command.elec_zero_trim);
     motor_.configureCurrentPi(controller_);
@@ -33,9 +39,15 @@ void Axis::applyCommand(const volatile MotorControlCommand_t& command)
 
 void Axis::runSlowLoop()
 {
+    const bool open_loop_mode = (controller_.mode() == ControlMode::VfOpenLoop) ||
+                                (controller_.mode() == ControlMode::IfOpenLoop);
+
     if (controller_.enabled())
     {
-        encoder_.updateFromBoard();
+        if (!open_loop_mode)
+        {
+            encoder_.updateFromBoard();
+        }
         current_sense_.sampleFromBoard();
     }
     updateChecks();
@@ -64,6 +76,13 @@ void Axis::runSlowLoop()
                 motor_.enterSafeState();
                 motor_.resetControl();
             }
+            else if (open_loop_mode && (check_.current_ok != 0U) &&
+                     (check_.pwm_off_safe != 0U))
+            {
+                motor_.resetControl();
+                controller_.resetOpenLoop();
+                state_ = AxisState::ClosedLoop;
+            }
             else if (check_.ready_closed_loop != 0U)
             {
                 motor_.resetControl();
@@ -84,7 +103,7 @@ void Axis::runSlowLoop()
             break;
 
         case AxisState::ClosedLoop:
-            if (check_.ma600_ok == 0U)
+            if (!open_loop_mode && (check_.ma600_ok == 0U))
             {
                 enterFault(MotorFault::Ma600Check);
             }
@@ -107,7 +126,6 @@ void Axis::runFastLoop()
     current_sense_.sampleFromBoard();
     if (!controller_.enabled())
     {
-        motor_.enterSafeState();
         return;
     }
 
@@ -149,6 +167,14 @@ void Axis::runFastLoop()
 
 void Axis::updateEncoderFast()
 {
+    const bool open_loop_mode = (controller_.mode() == ControlMode::VfOpenLoop) ||
+                                (controller_.mode() == ControlMode::IfOpenLoop);
+
+    if (open_loop_mode)
+    {
+        return;
+    }
+
     encoder_.updateFastFromBoard();
 }
 
@@ -186,21 +212,14 @@ void Axis::fillWatch(MotorControlWatch_t& out) const
     out.duty_u = snap.duty.u;
     out.duty_v = snap.duty.v;
     out.duty_w = snap.duty.w;
-    out.sample_pair = current_sense_.samplePair();
-    out.sample_three_shunt = current_sense_.threeShuntActive();
-    out.sample_hold = current_sense_.sampleHold();
-    out.sample_hold_count = current_sense_.sampleHoldCount();
-    out.sample_pair_hold_left = current_sense_.samplePairHoldLeft();
-    out.sample_common_window = current_sense_.commonWindow();
-    out.sample_switch_count = current_sense_.sampleSwitchCount();
-    out.sample_fallback_count = current_sense_.sampleFallbackCount();
-    out.iv_spike_count = current_sense_.ivSpikeCount();
-    out.iw_spike_count = current_sense_.iwSpikeCount();
-    out.iv_max_step = current_sense_.ivMaxStep();
-    out.iw_max_step = current_sense_.iwMaxStep();
     out.pwm_safe = motor_.pwmSafe() ? 1U : 0U;
     out.pwm_running = motor_.pwmRunning() ? 1U : 0U;
     out.check = check_;
+    out.command_apply_count = command_apply_count_;
+    out.command_enable = command_enable_;
+    out.command_control_mode = command_control_mode_;
+    out.command_vf_voltage = command_vf_voltage_;
+    out.command_open_loop_speed_ref = command_open_loop_speed_ref_;
 }
 
 AxisState Axis::state() const
@@ -258,7 +277,6 @@ void Axis::forceIdle()
     state_ = AxisState::Idle;
     fault_ = MotorFault::None;
     ma600_good_samples_ = 0U;
-    check_ = {};
     motor_.enterSafeState();
     motor_.resetControl();
 }
@@ -270,22 +288,22 @@ bool Axis::checkCurrentSafe() const
     bool w_ok = true;
     bool sum_ok = true;
 
-#if ((MOTOR_CHECK_CURRENT_CNT_LIMIT < 32767) || (MOTOR_CHECK_SUM_CNT_LIMIT < 32767))
+#if ((MOT_CHECK_CURR_CNT_LIMIT < 32767) || (MOT_CHECK_SUM_CNT_LIMIT < 32767))
     const auto current = current_sense_.phaseCurrent();
 #endif
 
-#if (MOTOR_CHECK_CURRENT_CNT_LIMIT < 32767)
-    u_ok = (current.iu >= -MOTOR_CHECK_CURRENT_CNT_LIMIT) &&
-           (current.iu <= MOTOR_CHECK_CURRENT_CNT_LIMIT);
-    v_ok = (current.iv >= -MOTOR_CHECK_CURRENT_CNT_LIMIT) &&
-           (current.iv <= MOTOR_CHECK_CURRENT_CNT_LIMIT);
-    w_ok = (current.iw >= -MOTOR_CHECK_CURRENT_CNT_LIMIT) &&
-           (current.iw <= MOTOR_CHECK_CURRENT_CNT_LIMIT);
+#if (MOT_CHECK_CURR_CNT_LIMIT < 32767)
+    u_ok = (current.iu >= -MOT_CHECK_CURR_CNT_LIMIT) &&
+           (current.iu <= MOT_CHECK_CURR_CNT_LIMIT);
+    v_ok = (current.iv >= -MOT_CHECK_CURR_CNT_LIMIT) &&
+           (current.iv <= MOT_CHECK_CURR_CNT_LIMIT);
+    w_ok = (current.iw >= -MOT_CHECK_CURR_CNT_LIMIT) &&
+           (current.iw <= MOT_CHECK_CURR_CNT_LIMIT);
 #endif
 
-#if (MOTOR_CHECK_SUM_CNT_LIMIT < 32767)
-    sum_ok = (current.sum >= -MOTOR_CHECK_SUM_CNT_LIMIT) &&
-             (current.sum <= MOTOR_CHECK_SUM_CNT_LIMIT);
+#if (MOT_CHECK_SUM_CNT_LIMIT < 32767)
+    sum_ok = (current.sum >= -MOT_CHECK_SUM_CNT_LIMIT) &&
+             (current.sum <= MOT_CHECK_SUM_CNT_LIMIT);
 #endif
 
     return u_ok && v_ok && w_ok && sum_ok;
@@ -295,7 +313,7 @@ void Axis::updateChecks()
 {
     if (encoder_.safe())
     {
-        if (ma600_good_samples_ < MOTOR_CHECK_MA600_SAMPLES)
+        if (ma600_good_samples_ < MOT_CHECK_MA600_SAMPLES)
         {
             ma600_good_samples_++;
         }
@@ -305,7 +323,7 @@ void Axis::updateChecks()
         ma600_good_samples_ = 0U;
     }
 
-    check_.ma600_ok = (ma600_good_samples_ >= MOTOR_CHECK_MA600_SAMPLES) ? 1U : 0U;
+    check_.ma600_ok = (ma600_good_samples_ >= MOT_CHECK_MA600_SAMPLES) ? 1U : 0U;
     check_.current_ok = checkCurrentSafe() ? 1U : 0U;
     check_.pwm_off_safe = (pwm_is_off_safe() != 0U) ? 1U : 0U;
     check_.ready_closed_loop =

@@ -12,7 +12,6 @@
     "Tests": "test",
     "BoardWatch": "mock",
     "StartupSmoke": "mock",
-    "CppSmoke": "mock",
     "Config": "config",
     "Inc": "include",
     "Src": "src",

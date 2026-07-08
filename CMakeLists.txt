@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
-# 本工程使用三种语言：
-# - C   ：原厂驱动、板级支持、main 入口包装
-# - CXX ：电机控制层结构
+# 当前 bring-up 工程只启用 C/ASM：
+# - C   ：原厂驱动、板级支持、main 入口包装、bring-up 控制层
 # - ASM ：Cortex-M 启动文件
-project(CMS32FOC_GCC C CXX ASM)
+#
+# C++ 最终控制层源码暂时冻结为普通源码文件，不创建 CMake 目标，
+# 不参与 configure/build，也不要求 C++ 工具链。
+project(CMS32FOC_GCC C ASM)
 
 # clangd 直接读取该文件获得交叉编译参数和头文件路径。
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -14,9 +16,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
 # 工程内常用根路径。集中定义后，下面的目标不需要反复写长路径，
 # 也更容易看出 ODrive 风格的固件目录结构。
@@ -30,12 +29,6 @@ set(CMS32_RAM_BYTES 8192)
 set(CMS32_HEAP_BYTES 1024)
 set(CMS32_STACK_BYTES 1024)
 
-# 编译发生在 Linux/WSL，调试发生在 Windows Ozone。
-# 这里把 DWARF 调试信息里的源码路径改写成 Windows 能访问的 UNC 路径。
-set(CMS32_DEBUG_SOURCE_ROOT "//wsl.localhost/Ubuntu${CMAKE_CURRENT_SOURCE_DIR}"
-    CACHE STRING "Windows-visible source root stored in DWARF debug info"
-)
-
 # CPU 选项既要用于编译，也要用于链接，所以单独放成一个列表复用。
 set(CMS32_CPU_OPTIONS
     -mcpu=cortex-m0plus
@@ -44,26 +37,15 @@ set(CMS32_CPU_OPTIONS
 
 # C/C++ 公共编译选项：
 # - 函数/数据独立分段：让链接器可以丢弃未使用的函数和数据
-# - 路径前缀映射：改善 Windows Ozone 的源码定位
+# - 调试源码路径保持 Linux 原始路径，由 Ozone AddPathSubstitute 映射到 WSL UNC
 # - 当前先打开常用警告，包含项目代码和原厂代码
 set(CMS32_COMMON_COMPILE_OPTIONS
     ${CMS32_CPU_OPTIONS}
     -ffunction-sections
     -fdata-sections
-    -fdebug-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=${CMS32_DEBUG_SOURCE_ROOT}
-    -ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=${CMS32_DEBUG_SOURCE_ROOT}
     -fdiagnostics-color=always
     -Wall
     -Wextra
-)
-
-# 嵌入式 C++ 使用策略：允许 class、构造函数等结构化能力，
-# 但关闭会引入较大运行时或隐藏控制流的特性。
-set(CMS32_COMMON_CXX_OPTIONS
-    -fno-exceptions
-    -fno-rtti
-    -fno-threadsafe-statics
-    -fno-use-cxa-atexit
 )
 
 # 在 add_executable() 之后调用，用来配置一个固件目标。
@@ -113,8 +95,6 @@ endfunction()
 add_library(cms32_project_options INTERFACE)
 target_compile_options(cms32_project_options INTERFACE
     ${CMS32_COMMON_COMPILE_OPTIONS}
-    # Generator expression：这些选项只应用到 C++ 源文件。
-    $<$<COMPILE_LANGUAGE:CXX>:${CMS32_COMMON_CXX_OPTIONS}>
 )
 target_include_directories(cms32_project_options INTERFACE
     ${CMS32_VENDOR_DIR}/CMSIS/Include
@@ -183,34 +163,28 @@ target_link_libraries(cms32_foc_algorithm PUBLIC
     cms32_project_options
 )
 
-# 电机控制层。这是第一个 C++ 层，应该远离裸寄存器细节；
-# 它通过 Board API 与硬件交互。
-add_library(cms32_motor_control STATIC
-    Firmware/MotorControl/Src/Axis.cpp
-    Firmware/MotorControl/Src/Controller.cpp
-    Firmware/MotorControl/Src/CurrentSense.cpp
-    Firmware/MotorControl/Src/Encoder.cpp
-    Firmware/MotorControl/Src/Motor.cpp
-    Firmware/MotorControl/Src/MotorControl.cpp
+# 纯 C bring-up 控制层。主固件当前使用它来优先稳定 VF 和电流采样；
+# C++ 控制层源码冻结，不创建库目标。
+add_library(cms32_motor_control_c STATIC
+    Firmware/MotorControl/C/motor_control_c.c
 )
-target_include_directories(cms32_motor_control PUBLIC
+target_include_directories(cms32_motor_control_c PUBLIC
+    Firmware/MotorControl/C
     Firmware/MotorControl/Inc
 )
-target_link_libraries(cms32_motor_control PUBLIC
-    # PUBLIC 让最终固件通过控制层目标继续继承
-    # 板级层、平台层、原厂驱动层的使用要求。
+target_link_libraries(cms32_motor_control_c PUBLIC
     cms32_bsp
     cms32_foc_algorithm
 )
 
-# 正式主固件。App/main.c 应尽量小，只负责把初始化和任务调度串起来；
-# Board 和 MotorControl 各自维护自己的领域逻辑。
+# 当前主固件是纯 C bring-up 固件。VF、电流采样和 Ozone 调试先在
+# cms32_motor_control_c 中稳定，C++ 控制层后续再按验证结果恢复。
 add_executable(cms32foc
     Firmware/App/main.c
     ${CMS32_PLATFORM_DIR}/startup_CMS32M6510_gcc.S
 )
 target_link_libraries(cms32foc PRIVATE
-    cms32_motor_control
+    cms32_motor_control_c
 )
 cms32_configure_firmware(cms32foc)
 
@@ -235,14 +209,3 @@ target_link_libraries(cms32_startup_smoke_test PRIVATE
     cms32_platform
 )
 cms32_configure_firmware(cms32_startup_smoke_test)
-
-# C++ 冒烟诊断固件。验证 __libc_init_array()、静态构造函数、
-# Data Flash 布局常量；不触碰板级 I/O。
-add_executable(cms32_cpp_smoke_test
-    Firmware/Tests/CppSmoke/main_cpp_smoke.cpp
-    ${CMS32_PLATFORM_DIR}/startup_CMS32M6510_gcc.S
-)
-target_link_libraries(cms32_cpp_smoke_test PRIVATE
-    cms32_platform
-)
-cms32_configure_firmware(cms32_cpp_smoke_test)

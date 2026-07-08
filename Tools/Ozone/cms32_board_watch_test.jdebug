@@ -21,8 +21,6 @@ void OnProjectLoad(void) {
   //
   Project.AddPathSubstitute("/home/jove/workspace/01-Projects/Embedded/CMS32FOC_GCC",
                             "//wsl.localhost/Ubuntu/home/jove/workspace/01-Projects/Embedded/CMS32FOC_GCC");
-  Project.AddPathSubstitute("C:/Users/EDY/Desktop", "$(ProjectDir)");
-  Project.AddPathSubstitute("c:/users/edy/desktop", "$(ProjectDir)");
 
   Project.SetDevice("Cortex-M0+");
   Project.SetHostIF("USB", "600107328");

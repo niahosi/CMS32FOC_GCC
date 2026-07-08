@@ -1,4 +1,5 @@
 build/
+Reference/
 .cache/
 .claude/
 *.jdebug.user
@@ -11,3 +12,4 @@ build/
 *.lst
 *.d
 *.su
+cms32foc-toolchain-*.tar

@@ -21,6 +21,31 @@ cmake --build --preset gcc-debug
 
 Generated artifacts are written to `build/gcc-debug/`.
 
+Docker toolchain build:
+
+```sh
+docker build -t cms32foc-toolchain:ubuntu24.04 .
+./scripts/docker-build.sh
+```
+
+Export the toolchain image for another machine:
+
+```sh
+./scripts/docker-export.sh
+```
+
+The exported Docker image can be loaded with:
+
+```sh
+docker load -i cms32foc-toolchain-ubuntu24.04.tar
+```
+
+The optional WSL rootfs tar can be imported from Windows PowerShell:
+
+```powershell
+wsl --import CMS32FOC C:\WSL\CMS32FOC .\cms32foc-toolchain-ubuntu24.04-wsl-rootfs.tar
+```
+
 Useful docs:
 
 - `Docs/Architecture/ProjectStructure.md`
@@ -28,6 +53,7 @@ Useful docs:
 - `Docs/Architecture/CxxMotorAndBoot.md`
 - `Docs/Architecture/MigrationPlan.md`
 - `Docs/VSCode-Tasks.md`
+- `Docs/Toolchain-Setup-zh.md`
 - `Docs/Hardware/Pins.md`
 
 Reference material copied from the original Keil workspace and hardware

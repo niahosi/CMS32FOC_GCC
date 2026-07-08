@@ -1,7 +1,7 @@
 #include "Encoder.hpp"
+#include "Config.h"
 
 extern "C" {
-#include "Config.h"
 #include "foc_bsp.h"
 }
 
@@ -66,7 +66,7 @@ bool Encoder::ok() const
 
 bool Encoder::safe() const
 {
-    return ok_ && (age_ <= MOTOR_ANGLE_MAX_AGE);
+    return ok_ && (age_ <= MOT_ANGLE_MAX_AGE);
 }
 
 void Encoder::consumeBoardCache(uint8_t ok, uint16_t raw)
@@ -100,11 +100,14 @@ void Encoder::consumeBoardCache(uint8_t ok, uint16_t raw)
 
 uint16_t Encoder::electricalFromRaw(uint16_t raw) const
 {
-    const int32_t zero = static_cast<int32_t>(MOTOR_ELEC_ZERO) + static_cast<int32_t>(zero_trim_);
-#if MOTOR_SENSOR_DIR > 0
-    return static_cast<uint16_t>(zero + static_cast<int32_t>(raw) * static_cast<int32_t>(MOTOR_SENSOR_ELEC));
+    const int32_t zero = static_cast<int32_t>(MOT_ELEC_ZERO) +
+                         static_cast<int32_t>(zero_trim_);
+#if MOT_SENSOR_DIR > 0
+    return static_cast<uint16_t>(zero + static_cast<int32_t>(raw) *
+                                            static_cast<int32_t>(MOT_SENSOR_ELEC));
 #else
-    return static_cast<uint16_t>(zero - static_cast<int32_t>(raw) * static_cast<int32_t>(MOTOR_SENSOR_ELEC));
+    return static_cast<uint16_t>(zero - static_cast<int32_t>(raw) *
+                                            static_cast<int32_t>(MOT_SENSOR_ELEC));
 #endif
 }
 

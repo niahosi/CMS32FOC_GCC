@@ -84,18 +84,9 @@ C/C++ require them to start as zero. Startup clears `.bss` before `main()`.
 
 If `.data` or `.bss` setup is wrong, global variables look random, state machines start in strange states, and faults often appear far away from the real bug.
 
-## C++ Constructor Fix
+## C++ Constructor Note
 
-The first C++ smoke test showed:
-
-```text
-loop_count increments
-ctor_value = 0
-```
-
-That meant the program reached `main()`, but C++ static constructors did not run.
-
-The root cause was that `.init_array` existed, but the linker script did not define the boundary symbols used by newlib:
+The current bring-up build freezes C++ targets, but the linker script still keeps the standard constructor-array symbols so C++ can be restored later without changing the memory layout:
 
 ```text
 __preinit_array_start / __preinit_array_end
@@ -103,13 +94,7 @@ __init_array_start    / __init_array_end
 __fini_array_start    / __fini_array_end
 ```
 
-After adding those symbols in `cms32m6510_flash.ld`, `__libc_init_array()` could find and call the constructor table. The C++ smoke test then showed:
-
-```text
-ctor_value = 0x517B1D3D
-```
-
-This confirms:
+When C++ is intentionally restored, `__libc_init_array()` can use those symbols to find constructor and destructor tables. For the current C bring-up firmware, this section is dormant.
 
 ```text
 Reset_Handler
@@ -140,14 +125,13 @@ Putting these symbols directly in the startup object avoids archive link-order i
 Startup problems are easier when split into small tests:
 
 - `cms32_startup_smoke_test`: verifies vector table, reset entry, `.data`, `.bss`, and `main()`.
-- `cms32_cpp_smoke_test`: verifies `__libc_init_array()` and C++ constructor execution.
 - `cms32_board_watch_test`: verifies Board init, MA600, ADC/PWM sync, and PWM safety state.
 
 Useful checks:
 
 ```sh
-arm-none-eabi-nm -n build/gcc-debug/cms32_cpp_smoke_test \
-  | rg "__Vectors|user_opt_data|main|__init_array|__libc_init_array|_init|_fini"
+arm-none-eabi-nm -n build/gcc-debug/cms32_startup_smoke_test \
+  | rg "__Vectors|user_opt_data|main"
 ```
 
 Expected examples:
@@ -155,15 +139,12 @@ Expected examples:
 ```text
 __Vectors       = 0x00000000
 user_opt_data   = 0x000000C0
-__init_array_*  exists when C++ constructors are used
 ```
 
 In Ozone, the useful smoke variables are:
 
 ```text
 g_startup_smoke.loop_count
-g_cpp_smoke.loop_count
-g_cpp_smoke.ctor_value
 ```
 
-If `loop_count` does not move, suspect reset/vector/startup/flash programming first. If `loop_count` moves but `ctor_value` is zero, suspect `__libc_init_array()` or `.init_array` linker symbols.
+If `loop_count` does not move, suspect reset/vector/startup/flash programming first.
