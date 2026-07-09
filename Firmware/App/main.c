@@ -26,14 +26,12 @@ volatile MotorControlCommand_t g_motor_cmd = {
 };
 
 volatile MotorControlWatch_t g_motor_watch;
-volatile MotorControlDiagWatch_t g_motor_diag_watch;
 
 int main(void)
 {
     bsp_init();
     MotorControl_Init();
     MotorControl_UpdateWatch(&g_motor_watch);
-    MotorControl_UpdateDiagWatch(&g_motor_diag_watch);
     bsp_start_adc_sync();
 
     while (1)
@@ -41,7 +39,6 @@ int main(void)
         MotorControl_ApplyCommand(&g_motor_cmd);
         MotorControl_RunSlowLoop();
         MotorControl_UpdateWatch(&g_motor_watch);
-        MotorControl_UpdateDiagWatch(&g_motor_diag_watch);
     }
 }
 

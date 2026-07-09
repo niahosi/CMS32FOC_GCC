@@ -1,4 +1,12 @@
-#include "motor_control_diag.h"
+/*
+ * Frozen diagnostic archive.
+ *
+ * Align/EncoderVoltage 和旧诊断 watch 已从 cms32foc 主固件移出。
+ * 该文件只保留旧实现便于以后参考，不参与 CMake 构建，也不应直接编译。
+ */
+#if 0
+
+#include "motor_control_vf.h"
 
 #include "foc_curr.h"
 
@@ -466,3 +474,5 @@ static void finish_align_scan(void)
     s_diag.align_done = 1U;
     set_align_stage(MC_ALIGN_STAGE_DONE);
 }
+
+#endif

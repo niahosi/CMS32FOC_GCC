@@ -6,7 +6,6 @@
 #include "foc_bsp.h"
 #include "foc_curr.h"
 #include "foc_ma600.h"
-#include "foc_ma600_diag.h"
 #include "foc_pwm.h"
 #include "CMS32M6510.h"
 #include "delay.h"
@@ -90,12 +89,6 @@ uint8_t bsp_angle_age(void)
 uint16_t bsp_read_angle(void)
 {
     return ma600_read_angle();
-}
-
-/** @brief 主循环低速维护入口，当前处理 MA600 在线调参。 */
-void bsp_service_slow(void)
-{
-    ma600_diag_service();
 }
 
 /**

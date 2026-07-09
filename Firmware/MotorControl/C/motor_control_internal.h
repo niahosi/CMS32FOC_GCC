@@ -21,9 +21,9 @@
 #define MC_MODE_SPEED 2U
 /** @brief 诊断模式：VF 开环电压旋转。 */
 #define MC_MODE_VF_OPEN_LOOP 3U
-/** @brief 诊断模式：开环扫描对齐零位。 */
+/** @brief 冻结模式：开环扫描对齐零位，cms32foc 主固件不支持。 */
 #define MC_MODE_ALIGN_LOCK 4U
-/** @brief 诊断模式：编码器角度下直接输出电压矢量。 */
+/** @brief 冻结模式：编码器角度下直接输出电压矢量，cms32foc 主固件不支持。 */
 #define MC_MODE_ENCODER_VOLTAGE 5U
 
 /** @brief 无故障。 */
@@ -45,11 +45,10 @@
 #define MC_SPEED_COUNTS_PER_REV ((int32_t)MOT_SENSOR_CPR * (int32_t)MOT_SENSOR_POLE_PAIRS)
 
 /**
- * @brief C 控制层和诊断模块共享的内部状态。
+ * @brief C 控制层和 VF 应急开环模块共享的内部状态。
  *
- * 该结构不是公共 API，只在 motor_control_c.c 与 motor_control_diag.c 之间共享。
- * Current/Speed 主线状态和诊断模式共用电流采样、编码器、PWM 输出和安全态字段，
- * 避免诊断代码复制闭环基础逻辑。
+ * 该结构不是公共 API，只在 motor_control_c.c 与 motor_control_vf.c 之间共享。
+ * Current/Speed 主线状态和 VF 开环共用电流采样、编码器、PWM 输出和安全态字段。
  */
 typedef struct
 {

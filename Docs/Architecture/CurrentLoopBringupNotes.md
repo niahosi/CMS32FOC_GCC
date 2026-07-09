@@ -136,7 +136,7 @@ theta_advance = speed_fb * advance_gain
 theta_used = encoder_elec + g_motor_cmd.voltage_theta_offset
 ```
 
-当前 `voltage_theta_offset` 已接入 `Current` 和 `Speed` 闭环路径，也接入 `EncoderVoltage` 诊断路径。VF 开环不使用 MA600 电角度，因此不使用该 offset。
+当前 `voltage_theta_offset` 已接入 `Current` 和 `Speed` 闭环路径。`EncoderVoltage` 诊断路径已从 `cms32foc` 主固件冻结移出；VF 开环不使用 MA600 电角度，因此不使用该 offset。
 
 观察转动时 `id` 是否变小、`iq` 是否更接近 `iq_ref`、声音是否更顺。
 

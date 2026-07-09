@@ -60,6 +60,3 @@ uint8_t bsp_angle_age(void);
 
 /** @brief 直接读取一次 MA600 原始角度。 */
 uint16_t bsp_read_angle(void);
-
-/** @brief 在主循环中处理低速板级维护任务，例如 MA600 在线补偿调参。 */
-void bsp_service_slow(void);

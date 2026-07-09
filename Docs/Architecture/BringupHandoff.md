@@ -43,12 +43,12 @@
 - 反推 `k ~= 3.31`，仍低于手册提醒的 BCT 200 温漂警戒区。
 - 32 点残差表工具已实现，但当前建议保持 32 点表全 0。
 - 原因：没有独立参考角度，也不能保证机械恒速。用当前电机自身 VF/闭环数据做 32 点表，容易把真实速度波动写进 MA600 校准。
-- MA600 主驱动现在只保留 init、angle/speed read、cache 和 register read/write；BCT/CORR/NVM 在线调参变量与 service 已移到 `Firmware/Board/Src/foc_ma600_diag.c`。
-- `bsp_service_slow()` 调用 `ma600_diag_service()`；普通快环读角只通过 `ma600_diag_busy()` 避开正在进行的调参写操作。
+- `cms32foc` 主固件不再链接 MA600 在线 BCT/CORR/NVM 调参 service。
+- MA600 主驱动只保留 init、angle/speed read、cache 和必要 register read/write；上电按 `TuneConfig.h` 写 BCT/ET RAM 默认补偿，不写 NVM。
 
-### MA600 在线调参变量
+### MA600 在线调参变量（冻结）
 
-以下变量仍可在 Ozone 中观察/写入，但现在属于 `foc_ma600_diag.c/.h`，不再放在 `foc_ma600.c/.h` 主驱动接口里。
+以下变量保留在 `foc_ma600_diag.c/.h` 作为冻结诊断源码参考，但不再链接进 `cms32foc` 主固件；Ozone 主固件 watch 中不可用。
 
 BCT 在线写 RAM：
 
@@ -109,11 +109,9 @@ g_ma600_nvm_ok
 ## 当前控制模式注意点
 
 - `control_mode = 1/2` 是干净主线，在 `motor_control_c.c` 中直接实现 Current/Speed。
-- `control_mode = 3/4/5` 是诊断模式，统一转发到 `motor_control_diag.c`：
-  - `3` VF
-  - `4` Align
-  - `5` EncoderVoltage
-- VF 运行中的开环角只能在明确切入 VF/Align 或初始化时重置；慢环状态重入不得重置开环角。观察 `g_motor_diag_watch.open_loop_reset_count`，VF 稳定运行时它不应持续增加。
+- `control_mode = 3` 是 VF 应急开环，实现在 `motor_control_vf.c`。
+- `control_mode = 4/5` 的 Align/EncoderVoltage 已冻结并从 `cms32foc` 主固件移出；命令这些模式会进入 unsupported fault/安全态。
+- VF 运行中的开环角只能在明确切入 VF 或初始化时重置；慢环状态重入不得重置开环角。观察 `g_motor_watch.open_loop_reset_count`，VF 稳定运行时它不应持续增加。
 - `run_vf_fast_loop()` 当前实际调用：
 
 ```c
@@ -124,9 +122,8 @@ MotorControl_InternalApplyVoltageVector(mc, 0, mc->command.vf_voltage, theta);
 
 ## Watch 分工
 
-- `g_motor_watch` 是主线 watch：`state/fault/mode`、电流 dq、Current/Speed refs、速度反馈、PI 输出、`vd/vq`、`voltage_theta`、duty、PWM/check、少量 encoder 基础状态。
-- `g_motor_diag_watch` 是诊断 watch：VF/Align 状态、坏角 reject/retry、差分测速与 MA600 speed 对比、命令镜像。
-- Current/Speed 模式不依赖诊断 watch 才能运行；诊断 watch 只是观察入口。
+- `g_motor_watch` 是唯一主固件 watch：`state/fault/mode`、电流 dq、Current/Speed refs、速度反馈、PI 输出、`vd/vq`、`voltage_theta`、VF `open_loop_theta/open_loop_reset_count/vf_voltage`、duty、PWM/check、少量 encoder 基础状态。
+- `g_motor_diag_watch` 已从 `cms32foc` 移除；Current/Speed/VF 都不依赖诊断 watch。
 
 - 电流环：
   - `CTRL_CUR_KP = 4`

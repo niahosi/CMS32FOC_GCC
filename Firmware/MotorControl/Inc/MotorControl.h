@@ -10,13 +10,13 @@ extern "C" {
  * @brief Ozone/主循环写入的电机控制命令。
  *
  * 该结构由主循环复制到控制层内部缓存，ADC 中断快环只读取缓存副本。
- * Current/Speed 主线只依赖闭环相关字段；VF/Align/EncoderVoltage 字段保留为诊断入口。
+ * Current/Speed 主线只依赖闭环相关字段；VF 字段保留为应急开环入口。
  */
 typedef struct
 {
     /** @brief 非 0 允许控制状态机进入指定控制模式。 */
     uint8_t enable;
-    /** @brief 控制模式：1 Current, 2 Speed, 3 VF, 4 Align, 5 EncoderVoltage。 */
+    /** @brief 控制模式：1 Current, 2 Speed, 3 VF；4/5 已冻结为不支持。 */
     uint8_t control_mode;
     /** @brief d 轴电流给定，内部 ADC count 缩放单位。 */
     int16_t id_ref;
@@ -38,19 +38,19 @@ typedef struct
     int16_t speed_ki;
     /** @brief 电流环输出电压限幅，SVPWM count 单位。 */
     int16_t current_v_limit;
-    /** @brief 诊断模式：VF 开环速度命令，内部开环角步进单位。 */
+    /** @brief VF 应急开环速度命令，内部开环角步进单位。 */
     int32_t open_loop_speed_ref;
-    /** @brief 诊断模式：VF 开环 q 轴电压，SVPWM count 单位。 */
+    /** @brief VF 应急开环 q 轴电压，SVPWM count 单位。 */
     int16_t vf_voltage;
-    /** @brief 预留 IF 诊断 d 轴给定。 */
+    /** @brief 冻结字段：预留 IF 诊断 d 轴给定，主固件不使用。 */
     int16_t if_id_ref;
-    /** @brief 预留 IF 诊断 q 轴给定。 */
+    /** @brief 冻结字段：预留 IF 诊断 q 轴给定，主固件不使用。 */
     int16_t if_iq_ref;
     /** @brief VF 开环超时时间，ms；0 表示不超时。 */
     uint16_t open_loop_timeout_ms;
     /** @brief 电角度零位临时修正，叠加到 MOT_ELEC_ZERO。 */
     int16_t elec_zero_trim;
-    /** @brief 输出电压角度偏置，用于相位提前/滞后诊断。 */
+    /** @brief Current/Speed 输出电压角度偏置，用于相位提前/滞后调试。 */
     int16_t voltage_theta_offset;
 } MotorControlCommand_t;
 
@@ -70,8 +70,7 @@ typedef struct
 /**
  * @brief Current/Speed 主线 Ozone watch。
  *
- * 只保留闭环调试必须字段。诊断模式、坏角重试、MA600 对比速度等字段见
- * MotorControlDiagWatch_t。Current/Speed 运行不依赖诊断 watch。
+ * 只保留 Current/Speed 闭环调试必须字段，以及 VF 应急开环的少量观察字段。
  */
 typedef struct
 {
@@ -137,6 +136,14 @@ typedef struct
     int16_t vq;
     /** @brief 本拍输出电压使用的电角度。 */
     uint16_t voltage_theta;
+    /** @brief VF 应急开环角，16-bit 周期角。 */
+    uint16_t open_loop_theta;
+    /** @brief VF 应急开环累计 tick。 */
+    uint32_t open_loop_ticks;
+    /** @brief VF 开环角重置次数；VF 稳定运行中不应持续增加。 */
+    uint32_t open_loop_reset_count;
+    /** @brief VF 电压命令镜像，SVPWM count 单位。 */
+    int16_t vf_voltage;
     /** @brief 电压矢量是否被限幅。 */
     uint8_t v_limited;
     /** @brief U 相 PWM duty count。 */
@@ -153,94 +160,6 @@ typedef struct
     MotorControlCheck_t check;
 } MotorControlWatch_t;
 
-/**
- * @brief 诊断模式和辅助观测 watch。
- *
- * 这里承接 VF/Align/EncoderVoltage、坏角重试、MA600 speed 对比和命令镜像。
- * 不应让 Current/Speed 主线依赖这些字段才能运行。
- */
-typedef struct
-{
-    /** @brief 开环角重置次数；VF 运行中不应持续增加。 */
-    uint32_t open_loop_reset_count;
-    /** @brief 开环角累计 tick。 */
-    uint32_t open_loop_ticks;
-    /** @brief 诊断模块生成的开环角，16-bit 周期角。 */
-    uint16_t open_loop_theta;
-    /** @brief 实际输出电压角。 */
-    uint16_t voltage_theta;
-    /** @brief 最近一次 raw 接受步进。 */
-    int16_t encoder_raw_step;
-    /** @brief 最近一次被拒绝 raw 的步进。 */
-    int16_t encoder_reject_step;
-    /** @brief 拒绝前的上一帧 raw。 */
-    uint16_t encoder_reject_prev_raw;
-    /** @brief 最近一次被拒绝的 raw。 */
-    uint16_t encoder_reject_raw;
-    /** @brief raw 跳变拒绝累计次数。 */
-    uint32_t encoder_reject_count;
-    /** @brief 坏角后即时重读尝试次数。 */
-    uint32_t encoder_retry_count;
-    /** @brief 即时重读成功并接受的次数。 */
-    uint32_t encoder_retry_accept_count;
-    /** @brief 最近一次即时重读 raw。 */
-    uint16_t encoder_retry_raw;
-    /** @brief Align 扫描是否完成。 */
-    uint8_t align_done;
-    /** @brief Align 扫描 tick。 */
-    uint32_t align_ticks;
-    /** @brief Align 目标电角度。 */
-    uint16_t align_theta;
-    /** @brief Align 采样时的 raw。 */
-    uint16_t align_raw;
-    /** @brief Align 得到的电角零位 trim。 */
-    int16_t align_zero_trim;
-    /** @brief Align 采样时的编码器电角度。 */
-    uint16_t align_encoder_elec;
-    /** @brief Align 扫描阶段。 */
-    uint8_t align_stage;
-    /** @brief 当前样本相对首次样本的 trim 拉偏。 */
-    int16_t align_pull_delta;
-    /** @brief Align trim 采样数。 */
-    uint16_t align_sample_count;
-    /** @brief Align trim 差值累计和。 */
-    int32_t align_delta_sum;
-    /** @brief raw 差分测速反馈，编码器电角 count/s。 */
-    int32_t speed_fb_diff;
-    /** @brief raw 差分测速反馈，rpm。 */
-    int16_t speed_fb_diff_rpm;
-    /** @brief MA600 speed frame 换算后的反馈，编码器电角 count/s。 */
-    int32_t speed_fb_ma600;
-    /** @brief MA600 speed frame 换算后的反馈，rpm。 */
-    int16_t speed_fb_ma600_rpm;
-    /** @brief MA600 speed 原始 signed 16-bit 输出。 */
-    int16_t ma600_speed_raw;
-    /** @brief 当前编译选择的速度反馈来源。 */
-    uint8_t speed_fb_source;
-    /** @brief 命令复制次数。 */
-    uint32_t command_apply_count;
-    /** @brief 命令 enable 镜像。 */
-    uint8_t command_enable;
-    /** @brief 命令 control_mode 镜像。 */
-    uint8_t command_control_mode;
-    /** @brief 命令 VF 电压镜像。 */
-    int16_t command_vf_voltage;
-    /** @brief 命令开环速度镜像。 */
-    int32_t command_open_loop_speed_ref;
-    /** @brief 命令 rpm 速度给定镜像。 */
-    int16_t command_speed_ref_rpm;
-    /** @brief 命令 q 轴电流限幅镜像。 */
-    int16_t command_iq_limit;
-    /** @brief 命令电压限幅镜像。 */
-    int16_t command_current_v_limit;
-    /** @brief 命令输出电压角偏置镜像。 */
-    int16_t command_voltage_theta_offset;
-    /** @brief 命令速度环 kp 镜像。 */
-    int16_t command_speed_kp;
-    /** @brief 命令速度环 ki 镜像。 */
-    int16_t command_speed_ki;
-} MotorControlDiagWatch_t;
-
 /** @brief 初始化 C 控制层状态和 PI 参数，保持 PWM 关闭。 */
 void MotorControl_Init(void);
 /** @brief 从 volatile 命令入口复制并限幅命令，只在主循环调用。 */
@@ -253,11 +172,6 @@ uint8_t MotorControl_FastLoopFromAdcIrq(void);
 void MotorControl_GetWatch(MotorControlWatch_t* out);
 /** @brief 将主线 watch 快照写入 volatile Ozone 变量。 */
 void MotorControl_UpdateWatch(volatile MotorControlWatch_t* out);
-/** @brief 获取诊断 watch 快照。 */
-void MotorControl_GetDiagWatch(MotorControlDiagWatch_t* out);
-/** @brief 将诊断 watch 快照写入 volatile Ozone 变量。 */
-void MotorControl_UpdateDiagWatch(volatile MotorControlDiagWatch_t* out);
-
 #ifdef __cplusplus
 }
 #endif

@@ -5,7 +5,6 @@
 #include "delay.h"
 #include "gpio.h"
 #include "ssp.h"
-#include "foc_ma600_diag.h"
 
 /**
  * @file foc_ma600.c
@@ -17,7 +16,11 @@
 #define MA600_REG_WRITE_UNLOCK 0xEAu
 #define MA600_REG_WRITE_KEY 0x54u
 #define MA600_REG_STORE_KEY 0x55u
+#define MA600_REG_BCT 0x02u
+#define MA600_REG_ET 0x03u
 #define MA600_REG_MTSP 0x1Cu
+#define MA600_ETX_MASK 0x01u
+#define MA600_ETY_MASK 0x02u
 #define MA600_MTSP_SPEED 0x80u
 #define MA600_MTSP_MULTITURN 0x00u
 #define MA600_DUMMY_BYTE 0x00u
@@ -48,6 +51,7 @@ static uint32_t xfer(uint32_t tx);
 static uint8_t xfer8(uint8_t tx, uint8_t* rx);
 static uint8_t wait_idle(uint32_t timeout);
 static void cache_fail(void);
+static void init_compensation_defaults(void);
 
 volatile uint32_t g_ma600_rx_drain_count;
 volatile uint8_t g_ma600_rx_drain_last;
@@ -68,7 +72,7 @@ void ma600_init(void)
     spi_pins_init();
     SSP_Start();
 
-    ma600_diag_init_defaults();
+    init_compensation_defaults();
 
     for (retry = 0u; retry < MA600_INIT_RETRY; retry++)
     {
@@ -259,11 +263,6 @@ uint8_t ma600_update(void)
     uint8_t low = 0u;
     uint8_t ok;
 
-    if (ma600_diag_busy() != 0U)
-    {
-        return 0U;
-    }
-
     /* 普通缓存更新带完整超时保护，适合主循环或非实时路径调用。 */
     cs_low();
     ok = xfer8(MA600_DUMMY_BYTE, &high);
@@ -290,11 +289,6 @@ uint8_t ma600_update_fast(void)
     uint8_t high = 0u;
     uint8_t low = 0u;
     uint32_t timeout;
-
-    if (ma600_diag_busy() != 0U)
-    {
-        return 0U;
-    }
 
     /*
      * 快速路径用于 ADC 中断后同步读角。
@@ -371,11 +365,6 @@ uint8_t ma600_update_speed_fast(void)
     uint8_t rx[4] = {0u, 0u, 0u, 0u};
     uint32_t timeout;
     uint8_t i;
-
-    if (ma600_diag_busy() != 0U)
-    {
-        return 0U;
-    }
 
     /*
      * MA600 在 MTSP=1 时，32-bit 连续帧返回 angle[15:0] + speed[15:0]。
@@ -531,4 +520,19 @@ static void cache_fail(void)
     {
         s_enc.age++;
     }
+}
+
+/** @brief 上电按编译配置写入 MA600 BCT/ET RAM 补偿，不触发 NVM。 */
+static void init_compensation_defaults(void)
+{
+#if (MOT_ENCODER_SIDE_BCT_EN != 0U)
+    const uint8_t et =
+        (uint8_t)(((MOT_ENCODER_SIDE_ETX != 0U) ? MA600_ETX_MASK : 0U) |
+                  ((MOT_ENCODER_SIDE_ETY != 0U) ? MA600_ETY_MASK : 0U));
+
+    ma600_write_reg(MA600_REG_BCT, (uint8_t)MOT_ENCODER_SIDE_BCT);
+    m0_delay_us(1000);
+    ma600_write_reg(MA600_REG_ET, et);
+    m0_delay_us(1000);
+#endif
 }

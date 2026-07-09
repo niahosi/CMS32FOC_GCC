@@ -137,7 +137,6 @@ add_library(cms32_bsp STATIC
     Firmware/Board/Src/foc_bsp.c
     Firmware/Board/Src/foc_curr.c
     Firmware/Board/Src/foc_ma600.c
-    Firmware/Board/Src/foc_ma600_diag.c
     Firmware/Board/Src/foc_pwm.c
 )
 target_include_directories(cms32_bsp PUBLIC
@@ -168,7 +167,7 @@ target_link_libraries(cms32_foc_algorithm PUBLIC
 # C++ 控制层源码冻结，不创建库目标。
 add_library(cms32_motor_control_c STATIC
     Firmware/MotorControl/C/motor_control_c.c
-    Firmware/MotorControl/C/motor_control_diag.c
+    Firmware/MotorControl/C/motor_control_vf.c
 )
 target_include_directories(cms32_motor_control_c PUBLIC
     Firmware/MotorControl/C

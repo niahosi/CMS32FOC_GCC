@@ -1,7 +1,7 @@
 #include "motor_control_c.h"
 
-#include "motor_control_diag.h"
 #include "motor_control_internal.h"
+#include "motor_control_vf.h"
 
 #include "foc_bsp.h"
 #include "foc_curr.h"
@@ -43,8 +43,6 @@ static void run_current_fast_loop(uint8_t speed_mode);
 static void fill_watch(MotorControlWatch_t* out);
 static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
                                    const MotorControlWatch_t* src);
-static void copy_diag_watch_to_volatile(volatile MotorControlDiagWatch_t* dst,
-                                        const MotorControlDiagWatch_t* src);
 
 /** @brief 初始化控制层全局状态、PI 控制器和 PWM 安全态。 */
 void MotorControl_Init(void)
@@ -75,7 +73,7 @@ void MotorControl_Init(void)
     s_mc.voltage_theta = 0U;
     s_mc.duty = (FocDuty_t){PWM_DUTY_50, PWM_DUTY_50, PWM_DUTY_50};
     s_mc.voltage_limited = 0U;
-    MotorControlDiag_Init();
+    MotorControlVf_Init();
     s_mc.check = (MotorControlCheck_t){0U, 1U, 1U, 0U};
     pwm_off();
 }
@@ -100,15 +98,7 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
         reset_current_loop();
         if (next_mode == MC_MODE_VF_OPEN_LOOP)
         {
-            MotorControlDiag_ResetForMode(next_mode);
-        }
-        else if (next_mode == MC_MODE_ALIGN_LOCK)
-        {
-            MotorControlDiag_ResetForMode(next_mode);
-        }
-        else if (next_mode == MC_MODE_ENCODER_VOLTAGE)
-        {
-            MotorControlDiag_ResetForMode(next_mode);
+            MotorControlVf_ResetForMode(next_mode);
         }
     }
     s_mc.mode = next_mode;
@@ -119,16 +109,8 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
     s_mc.command.speed_ki = foc_clamp_s16(s_mc.command.speed_ki, 0, 32767);
     s_mc.command.current_v_limit = abs_limit(s_mc.command.current_v_limit,
                                              (int16_t)PWM_SVPWM_V_LIMIT);
-    if (s_mc.mode == MC_MODE_ENCODER_VOLTAGE)
-    {
-        s_mc.command.id_ref = clamp_ref(s_mc.command.id_ref, s_mc.command.current_v_limit);
-        s_mc.command.iq_ref = clamp_ref(s_mc.command.iq_ref, s_mc.command.current_v_limit);
-    }
-    else
-    {
-        s_mc.command.id_ref = clamp_ref(s_mc.command.id_ref, CTRL_CUR_REF_LIMIT);
-        s_mc.command.iq_ref = clamp_ref(s_mc.command.iq_ref, s_mc.command.iq_limit);
-    }
+    s_mc.command.id_ref = clamp_ref(s_mc.command.id_ref, CTRL_CUR_REF_LIMIT);
+    s_mc.command.iq_ref = clamp_ref(s_mc.command.iq_ref, s_mc.command.iq_limit);
     s_mc.command.open_loop_speed_ref =
         clamp_s32_local(s_mc.command.open_loop_speed_ref, CTRL_SPD_REF_LIMIT);
     if (s_mc.command.speed_ref_rpm != 0)
@@ -160,8 +142,6 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
 /** @brief 主循环慢环，执行板级维护、安全检查和状态机更新。 */
 void MotorControl_RunSlowLoop(void)
 {
-    bsp_service_slow();
-
     s_mc.current.u = curr_u();
     s_mc.current.v = curr_v();
     s_mc.current.w = curr_w();
@@ -177,26 +157,22 @@ void MotorControl_RunSlowLoop(void)
     }
 
     if ((s_mc.mode == MC_MODE_VF_OPEN_LOOP) || (s_mc.mode == MC_MODE_CURRENT) ||
-        (s_mc.mode == MC_MODE_SPEED) || (s_mc.mode == MC_MODE_ALIGN_LOCK) ||
-        (s_mc.mode == MC_MODE_ENCODER_VOLTAGE))
+        (s_mc.mode == MC_MODE_SPEED))
     {
         s_mc.check.ma600_ok =
-            ((s_mc.mode == MC_MODE_CURRENT) || (s_mc.mode == MC_MODE_SPEED) ||
-             (s_mc.mode == MC_MODE_ENCODER_VOLTAGE))
+            ((s_mc.mode == MC_MODE_CURRENT) || (s_mc.mode == MC_MODE_SPEED))
                 ? (uint8_t)((s_mc.encoder_ok != 0U) || (s_mc.encoder_initialized == 0U))
                 : 1U;
         s_mc.check.ready_closed_loop =
             (uint8_t)((s_mc.check.current_ok != 0U) &&
                       ((s_mc.mode == MC_MODE_VF_OPEN_LOOP) ||
-                       (s_mc.mode == MC_MODE_ALIGN_LOCK) || (s_mc.encoder_ok != 0U) ||
-                       (s_mc.encoder_initialized == 0U)));
+                       (s_mc.encoder_ok != 0U) || (s_mc.encoder_initialized == 0U)));
 
         if (s_mc.check.ready_closed_loop != 0U)
         {
             if (s_mc.state != MC_STATE_CLOSED_LOOP)
             {
-                if ((s_mc.mode != MC_MODE_VF_OPEN_LOOP) &&
-                    (s_mc.mode != MC_MODE_ALIGN_LOCK))
+                if (s_mc.mode != MC_MODE_VF_OPEN_LOOP)
                 {
                     reset_speed_loop();
                 }
@@ -233,10 +209,9 @@ uint8_t MotorControl_FastLoopFromAdcIrq(void)
 
     if ((s_mc.enabled != 0U) && (s_mc.state == MC_STATE_CLOSED_LOOP))
     {
-        if ((s_mc.mode == MC_MODE_VF_OPEN_LOOP) || (s_mc.mode == MC_MODE_ALIGN_LOCK) ||
-            (s_mc.mode == MC_MODE_ENCODER_VOLTAGE))
+        if (s_mc.mode == MC_MODE_VF_OPEN_LOOP)
         {
-            MotorControlDiag_RunFastLoop(&s_mc);
+            MotorControlVf_RunFastLoop(&s_mc);
         }
         else if (s_mc.mode == MC_MODE_SPEED)
         {
@@ -272,30 +247,6 @@ void MotorControl_UpdateWatch(volatile MotorControlWatch_t* out)
 
     fill_watch(&snapshot);
     copy_watch_to_volatile(out, &snapshot);
-}
-
-/** @brief 复制当前诊断 watch 到普通内存。 */
-void MotorControl_GetDiagWatch(MotorControlDiagWatch_t* out)
-{
-    if (out == 0)
-    {
-        return;
-    }
-    MotorControlDiag_FillWatch(&s_mc, out);
-}
-
-/** @brief 复制当前诊断 watch 到 volatile Ozone 观察变量。 */
-void MotorControl_UpdateDiagWatch(volatile MotorControlDiagWatch_t* out)
-{
-    MotorControlDiagWatch_t snapshot;
-
-    if (out == 0)
-    {
-        return;
-    }
-
-    MotorControlDiag_FillWatch(&s_mc, &snapshot);
-    copy_diag_watch_to_volatile(out, &snapshot);
 }
 
 /** @brief 从 volatile 命令入口逐字段复制，避免快环直接读取 volatile 结构。 */
@@ -873,6 +824,10 @@ static void fill_watch(MotorControlWatch_t* out)
     out->vd = s_mc.voltage_dq.d;
     out->vq = s_mc.voltage_dq.q;
     out->voltage_theta = s_mc.voltage_theta;
+    out->open_loop_theta = MotorControlVf_OpenLoopTheta();
+    out->open_loop_ticks = MotorControlVf_OpenLoopTicks();
+    out->open_loop_reset_count = MotorControlVf_OpenLoopResetCount();
+    out->vf_voltage = s_mc.command.vf_voltage;
     out->v_limited = s_mc.voltage_limited;
     out->duty_u = (uint16_t)duty_u;
     out->duty_v = (uint16_t)duty_v;
@@ -917,6 +872,10 @@ static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
     dst->vd = src->vd;
     dst->vq = src->vq;
     dst->voltage_theta = src->voltage_theta;
+    dst->open_loop_theta = src->open_loop_theta;
+    dst->open_loop_ticks = src->open_loop_ticks;
+    dst->open_loop_reset_count = src->open_loop_reset_count;
+    dst->vf_voltage = src->vf_voltage;
     dst->v_limited = src->v_limited;
     dst->duty_u = src->duty_u;
     dst->duty_v = src->duty_v;
@@ -927,49 +886,4 @@ static void copy_watch_to_volatile(volatile MotorControlWatch_t* dst,
     dst->check.current_ok = src->check.current_ok;
     dst->check.pwm_off_safe = src->check.pwm_off_safe;
     dst->check.ready_closed_loop = src->check.ready_closed_loop;
-}
-
-/** @brief 将诊断 watch 快照逐字段写入 volatile 目标。 */
-static void copy_diag_watch_to_volatile(volatile MotorControlDiagWatch_t* dst,
-                                        const MotorControlDiagWatch_t* src)
-{
-    dst->open_loop_reset_count = src->open_loop_reset_count;
-    dst->open_loop_ticks = src->open_loop_ticks;
-    dst->open_loop_theta = src->open_loop_theta;
-    dst->voltage_theta = src->voltage_theta;
-    dst->encoder_raw_step = src->encoder_raw_step;
-    dst->encoder_reject_step = src->encoder_reject_step;
-    dst->encoder_reject_prev_raw = src->encoder_reject_prev_raw;
-    dst->encoder_reject_raw = src->encoder_reject_raw;
-    dst->encoder_reject_count = src->encoder_reject_count;
-    dst->encoder_retry_count = src->encoder_retry_count;
-    dst->encoder_retry_accept_count = src->encoder_retry_accept_count;
-    dst->encoder_retry_raw = src->encoder_retry_raw;
-    dst->align_done = src->align_done;
-    dst->align_ticks = src->align_ticks;
-    dst->align_theta = src->align_theta;
-    dst->align_raw = src->align_raw;
-    dst->align_zero_trim = src->align_zero_trim;
-    dst->align_encoder_elec = src->align_encoder_elec;
-    dst->align_stage = src->align_stage;
-    dst->align_pull_delta = src->align_pull_delta;
-    dst->align_sample_count = src->align_sample_count;
-    dst->align_delta_sum = src->align_delta_sum;
-    dst->speed_fb_diff = src->speed_fb_diff;
-    dst->speed_fb_diff_rpm = src->speed_fb_diff_rpm;
-    dst->speed_fb_ma600 = src->speed_fb_ma600;
-    dst->speed_fb_ma600_rpm = src->speed_fb_ma600_rpm;
-    dst->ma600_speed_raw = src->ma600_speed_raw;
-    dst->speed_fb_source = src->speed_fb_source;
-    dst->command_apply_count = src->command_apply_count;
-    dst->command_enable = src->command_enable;
-    dst->command_control_mode = src->command_control_mode;
-    dst->command_vf_voltage = src->command_vf_voltage;
-    dst->command_open_loop_speed_ref = src->command_open_loop_speed_ref;
-    dst->command_speed_ref_rpm = src->command_speed_ref_rpm;
-    dst->command_iq_limit = src->command_iq_limit;
-    dst->command_current_v_limit = src->command_current_v_limit;
-    dst->command_voltage_theta_offset = src->command_voltage_theta_offset;
-    dst->command_speed_kp = src->command_speed_kp;
-    dst->command_speed_ki = src->command_speed_ki;
 }
