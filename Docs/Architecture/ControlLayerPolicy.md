@@ -1,48 +1,36 @@
 # Control Layer Policy
 
-## Current Rule
+当前规则很简单：`cms32foc` 主固件只保留 C 主线，目标是稳定 Current、Speed 和 VF。
 
-`cms32foc` is a pure C bring-up firmware. It links `cms32_motor_control_c` and uses it as the only active motor-control path for VF rotation, current sampling, PWM/ADC timing, and Ozone diagnostics.
-
-The C++ control layer remains in the repository as the final closed-loop architecture reference, but no C++ CMake targets are currently defined. The default project enables only C and ASM.
-
-## Bring-up Path
-
-The active runtime path is intentionally short:
+## Active Path
 
 ```text
 main.c
-  -> bsp_init()
-  -> MotorControl_Init()
-  -> bsp_start_adc_sync()
-  -> ADC_IRQHandler
-  -> curr_irq()
+  -> MotorControl_ApplyCommand()
+  -> MotorControl_RunSlowLoop()
+ADC_IRQHandler
   -> MotorControl_FastLoopFromAdcIrq()
+       -> Current / Speed / VF
 ```
 
-VF mode in the C bring-up path must stay independent from MA600, align, current PI, and the C++ Axis state machine. Its job is to produce a predictable open-loop voltage vector while current sampling is being tuned.
+主控制层只通过 `foc_bsp.h` 使用板级能力，只通过 `foc_math.h` 使用 FOC 算法。寄存器细节留在 `Firmware/Board/Src`。
 
-Current-loop and speed-loop bring-up notes are recorded in `Docs/Architecture/CurrentLoopBringupNotes.md`, including electrical zero, sensor direction, q-axis torque, and dynamic `id` behavior.
+## Frozen Paths
 
-The current source-of-truth runtime diagram is `Docs/Architecture/ActiveControlChain.md`.
+以下内容不参与 `cms32foc` 默认构建：
 
-## C++ Recovery Rule
+- `Firmware/MotorControl/Src/*.cpp` 旧 C++ 控制层。
+- Align 和 EncoderVoltage，冻结在 `Firmware/FrozenDiagnostics/MotorControl/`。
+- MA600 在线 BCT/CORR/NVM 调参，冻结在 `Firmware/FrozenDiagnostics/Board/`。
+- BoardWatch 和 StartupSmoke 诊断固件，保留为手动 target。
 
-Do not restore the old C++ Axis behavior directly into `cms32foc`.
+## Re-enable Rule
 
-When the C++ layer is reintroduced, it must inherit the behavior already proven in the C bring-up path:
+恢复任何冻结路径时，必须单独开一轮：
 
-- no ISR fast-loop dependency on application loop-stage test markers;
-- no repeated `pwm_off()` from VF diagnostic state transitions;
-- VF diagnostics stay outside the closed-loop Axis state machine;
-- Current, Speed, Align, and MA600 checks are restored only after VF sampling is stable.
+1. 先说明要恢复的目标和原因。
+2. 同步接口和 CMake target。
+3. 确认不会改变 Current/Speed/VF 主线行为。
+4. 构建并检查 `cms32foc` 符号，避免辅助代码重新混进主固件。
 
-## Build Boundary
-
-Expected main firmware link boundary:
-
-```text
-cms32foc -> cms32_motor_control_c -> cms32_bsp + cms32_foc_algorithm
-```
-
-With the default configuration, no C++ targets are created, no `.cpp` files are compiled, and no C++ control object may appear in `cms32foc.map`. To intentionally resume C++ work later, re-enable CXX in `project()` and add back explicit C++ targets.
+当前运行状态和函数说明以 `Docs/Architecture/ActiveControlChain.md` 为准。

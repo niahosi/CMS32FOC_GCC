@@ -48,7 +48,7 @@
 
 ### MA600 在线调参变量（冻结）
 
-以下变量保留在 `foc_ma600_diag.c/.h` 作为冻结诊断源码参考，但不再链接进 `cms32foc` 主固件；Ozone 主固件 watch 中不可用。
+以下变量保留在 `Firmware/FrozenDiagnostics/Board/foc_ma600_diag.c/.h` 作为冻结诊断源码参考，但不再链接进 `cms32foc` 主固件；Ozone 主固件 watch 中不可用。该目录中的源码是“找结果后写死”的历史工具，需要恢复时再同步头文件接口并手动加入 CMake。
 
 BCT 在线写 RAM：
 
@@ -108,9 +108,10 @@ g_ma600_nvm_ok
 
 ## 当前控制模式注意点
 
-- `control_mode = 1/2` 是干净主线，在 `motor_control_c.c` 中直接实现 Current/Speed。
+- `control_mode = 1/2` 是干净主线，由 `motor_control_c.c` 分发到 `motor_control_current.c` 实现 Current/Speed。
 - `control_mode = 3` 是 VF 应急开环，实现在 `motor_control_vf.c`。
-- `control_mode = 4/5` 的 Align/EncoderVoltage 已冻结并从 `cms32foc` 主固件移出；命令这些模式会进入 unsupported fault/安全态。
+- 当前 VF 默认 `OL_SPEED_REF = 50`，`OL_VF_VOLTAGE = 80`；这两个值由 `g_motor_cmd.open_loop_speed_ref/vf_voltage` 上电初始化。
+- `control_mode = 4/5` 的 Align/EncoderVoltage 已冻结到 `Firmware/FrozenDiagnostics/MotorControl/motor_control_diag_frozen.c`，并从 `cms32foc` 主固件移出；命令这些模式会进入 unsupported fault/安全态。
 - VF 运行中的开环角只能在明确切入 VF 或初始化时重置；慢环状态重入不得重置开环角。观察 `g_motor_watch.open_loop_reset_count`，VF 稳定运行时它不应持续增加。
 - `run_vf_fast_loop()` 当前实际调用：
 
@@ -133,16 +134,16 @@ MotorControl_InternalApplyVoltageVector(mc, 0, mc->command.vf_voltage, theta);
   - `CTRL_CUR_SAFE_LIMIT = 400`
   - `CTRL_CUR_REF_LIMIT = 1000`
 - 速度环当前配置：
-  - `CTRL_SPD_EST_HZ = 500`
+  - `CTRL_SPD_EST_HZ = 1000`
   - `CTRL_SPD_FB_SOURCE = CTRL_SPD_FB_SOURCE_DIFF`
-  - `CTRL_SPD_KP = 64`
-  - `CTRL_SPD_KI = 0`
-  - `CTRL_SPD_ERR_SHIFT = 6`
-  - `CTRL_SPD_FILTER_SHIFT = 3`
-  - `CTRL_SPD_DIFF_WINDOW_SAMPLES = 4`
+  - `CTRL_SPD_KP = 32`
+  - `CTRL_SPD_KI = 3`
+  - `CTRL_SPD_ERR_SHIFT = 10`
+  - `CTRL_SPD_FILTER_SHIFT = 2`
   - `CTRL_SPD_CMD_DEADBAND_RPM = 5`
-  - `CTRL_SPD_IQ_LIMIT = 30`
-  - `CTRL_SPD_IQ_SLEW_STEP = 1`
+  - `CTRL_SPD_IQ_LIMIT = 80`
+  - `CTRL_SPD_REF_LIMIT_RPM = 5000`
+  - `CTRL_SPD_IQ_SLEW_STEP = 4`
 
 ## 速度环下一步建议
 
@@ -156,10 +157,9 @@ MotorControl_InternalApplyVoltageVector(mc, 0, mc->command.vf_voltage, theta);
 3. 判断方向：
    - 若速度给定为正，`speed_fb_rpm` 也应为正
    - 若方向相反，先不要调 PI，优先修 `MOT_SENSOR_DIR` 或速度符号
-4. 初调速度 PI：
-   - 默认 `speed_ki = 0`，此时 PI 积分保持清零，先只调 `speed_kp`
-   - 先调 `speed_kp`，让速度能跟随但不过冲
-   - 再慢慢加 `speed_ki` 消除稳态误差
+4. 当前速度 PI 节点：
+   - 默认 `speed_ki = 3`，用于提供 3000 rpm 以上需要的稳态扭矩
+   - 已验证 3000 rpm 以内平均速度稳定；3300 rpm 可作为当前高转节点
    - 若 `speed_iq_cmd` 正负打满，先降低 `speed_kp/speed_ki` 或减小 `iq_limit`，不要继续放开扭矩上限
 5. 速度闭环不稳时先看角度质量：
    - `encoder_reject_count` 是否增加
@@ -179,6 +179,6 @@ MotorControl_InternalApplyVoltageVector(mc, 0, mc->command.vf_voltage, theta);
 
 ```text
 cmake --build --preset gcc-debug --target cms32foc
-Flash image: 30816 bytes, 47.0%
-RAM total: 4848 bytes, 59.2%
+Flash image: 26988 bytes, 41.2%
+RAM total: 4640 bytes, 56.6%
 ```

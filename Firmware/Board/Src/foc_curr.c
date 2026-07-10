@@ -139,6 +139,7 @@ static void pga_init(void);
 static void adc_init(void);
 static uint16_t adc_result12(uint32_t ch);
 static uint16_t read_one(uint32_t ch, uint32_t ch_msk);
+static void sample_raw(void);
 static void irq_clear(void);
 static void sync_reset(void);
 static void state_clear(void);
@@ -182,7 +183,7 @@ void curr_init(void)
 }
 
 /** @brief 软件轮询读取一次三相原始 ADC。 */
-void curr_sample_raw(void)
+static void sample_raw(void)
 {
     s_raw.u = read_one(ADC_CH_0, ADC_CH_0_MSK);
     s_raw.v = read_one(ADC_CH_2, ADC_CH_2_MSK);
@@ -198,7 +199,7 @@ void curr_calib(uint16_t samples)
 
     for (uint16_t i = 0; i < samples; i++)
     {
-        curr_sample_raw();
+        sample_raw();
         sum_u += s_raw.u;
         sum_v += s_raw.v;
         sum_w += s_raw.w;
@@ -207,50 +208,6 @@ void curr_calib(uint16_t samples)
     s_zero.u = (uint16_t)(sum_u / samples);
     s_zero.v = (uint16_t)(sum_v / samples);
     s_zero.w = (uint16_t)(sum_w / samples);
-}
-
-/** @brief 临时关闭 PWM 触发采样，用软件采样重新估计零漂。 */
-void curr_calib_pwm(uint16_t samples)
-{
-    uint32_t sum_u = 0;
-    uint32_t sum_v = 0;
-    uint32_t sum_w = 0;
-
-    NVIC_DisableIRQ(ADC_IRQn);
-    ADC_DisableHardwareTrigger(ADC_TG_EPWM_CMP0);
-    ADC_DisableHardwareTrigger(ADC_TG_EPWM_CMP1);
-    ADC_ConfigRunMode(ADC_MODE_HIGH, ADC_CONVERT_SINGLE, ADC_CLK_DIV_1, 25);
-
-    for (uint16_t i = 0; i < samples; i++)
-    {
-        curr_sample_raw();
-        sum_u += s_raw.u;
-        sum_v += s_raw.v;
-        sum_w += s_raw.w;
-    }
-
-    s_zero.u = (uint16_t)(sum_u / samples);
-    s_zero.v = (uint16_t)(sum_v / samples);
-    s_zero.w = (uint16_t)(sum_w / samples);
-
-    ADC_ConfigRunMode(ADC_MODE_HIGH, ADC_CONVERT_CONTINUOUS, ADC_CLK_DIV_1, 25);
-    trigger_update();
-    irq_clear();
-    ADC_DisableChannelInt(ADC_CH_0_MSK | ADC_CH_2_MSK | ADC_CH_3_MSK);
-    ADC_EnableChannelInt(s_sync.last_mask);
-    NVIC_EnableIRQ(ADC_IRQn);
-    ADC_Go();
-}
-
-/** @brief 将当前 raw ADC 扣零漂并刷新物理/逻辑电流缓存。 */
-void curr_update(void)
-{
-    Curr3 physical;
-
-    physical.u = (int16_t)((int16_t)s_raw.u - (int16_t)s_zero.u);
-    physical.v = (int16_t)((int16_t)s_raw.v - (int16_t)s_zero.v);
-    physical.w = (int16_t)((int16_t)s_raw.w - (int16_t)s_zero.w);
-    apply_phys(&physical);
 }
 
 /** @brief 启动 PWM 触发 ADC 的连续同步采样。 */
@@ -351,10 +308,6 @@ int16_t curr_u(void) { return s_logic.u; }
 int16_t curr_v(void) { return s_logic.v; }
 int16_t curr_w(void) { return s_logic.w; }
 int16_t curr_sum(void) { return s_logic.sum; }
-int16_t curr_raw_u(void) { return s_phys.u; }
-int16_t curr_raw_v(void) { return s_phys.v; }
-int16_t curr_raw_w(void) { return s_phys.w; }
-int16_t curr_raw_sum(void) { return s_phys.sum; }
 uint16_t curr_raw_adc_u(void) { return s_raw.u; }
 uint16_t curr_raw_adc_v(void) { return s_raw.v; }
 uint16_t curr_raw_adc_w(void) { return s_raw.w; }

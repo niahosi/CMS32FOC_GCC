@@ -47,8 +47,8 @@
 /**
  * @brief C 控制层和 VF 应急开环模块共享的内部状态。
  *
- * 该结构不是公共 API，只在 motor_control_c.c 与 motor_control_vf.c 之间共享。
- * Current/Speed 主线状态和 VF 开环共用电流采样、编码器、PWM 输出和安全态字段。
+ * 该结构不是公共 API，只在 MotorControl C 内部模块之间共享。
+ * Current/Speed 主线、VF 开环、编码器、输出和 watch 共用同一份状态。
  */
 typedef struct
 {
@@ -68,6 +68,14 @@ typedef struct
     uint32_t slow_loop_count;
     /** @brief 有效快环执行次数。 */
     uint32_t fast_loop_count;
+    /** @brief 速度环/编码器 reset 次数，用于诊断闭环是否反复重入。 */
+    uint32_t speed_reset_count;
+    /** @brief 进入 PWM 安全态次数，用于诊断 iq_cmd 是否被安全路径清零。 */
+    uint32_t safe_state_count;
+    /** @brief 速度环 PI 更新次数。 */
+    uint32_t speed_loop_count;
+    /** @brief 速度给定落入死区导致速度环清零的次数。 */
+    uint32_t speed_deadband_count;
     /** @brief 快环分频计数，用于降低电流环执行频率。 */
     uint16_t current_loop_div;
     /** @brief 速度估算/速度环分频计数。 */
@@ -98,22 +106,32 @@ typedef struct
     uint32_t encoder_retry_accept_count;
     /** @brief 最近一次即时重读 raw。 */
     uint16_t encoder_retry_raw;
+    /** @brief 因读取失败或坏角而保持上一角度的次数。 */
+    uint32_t encoder_hold_count;
+    /** @brief 速度估算拒绝异常 raw 差分的次数。 */
+    uint32_t speed_reject_count;
+    /** @brief 最近一次被速度估算拒绝的 raw 差分。 */
+    int16_t speed_reject_delta;
     /** @brief 当前选用速度反馈，编码器电角 count/s。 */
     int32_t speed_fb;
+    /** @brief 速度环内部斜坡后的目标，编码器电角 count/s。 */
+    int32_t speed_ref_active;
     /** @brief raw 差分速度反馈，编码器电角 count/s。 */
     int32_t speed_fb_diff;
     /** @brief MA600 speed frame 速度反馈，编码器电角 count/s。 */
     int32_t speed_fb_ma600;
-    /** @brief 差分测速窗口内累计 raw 增量。 */
-    int32_t speed_diff_accum;
     /** @brief MA600 speed 原始 signed 16-bit 输出。 */
     int16_t ma600_speed_raw;
     /** @brief 速度环 rpm 误差。 */
     int16_t speed_err_rpm;
+    /** @brief 速度环斜率限制前的 q 轴电流目标。 */
+    int16_t speed_iq_target;
+    /** @brief 速度目标产生的 q 轴电流前馈。 */
+    int16_t speed_iq_ff;
     /** @brief 速度环输出的 q 轴电流给定。 */
     int16_t speed_iq_ref;
-    /** @brief 差分测速窗口样本数。 */
-    uint8_t speed_diff_count;
+    /** @brief 模式切入后速度估算空白窗口计数。 */
+    uint8_t speed_startup_blank;
     /** @brief 角度缓存年龄。 */
     uint8_t encoder_age;
     /** @brief 编码器角度是否可用于闭环。 */
@@ -152,10 +170,20 @@ typedef struct
 
 /** @brief 检查内部状态中的三相电流是否处于安全范围。 */
 uint8_t MotorControl_InternalCurrentOk(MotorControlCState* mc);
+/** @brief 清空编码器、速度反馈和坏角诊断状态。 */
+void MotorControl_EncoderReset(MotorControlCState* mc);
 /** @brief 快环读取/校验/接受一次编码器角度，带坏角即时重读。 */
 uint8_t MotorControl_InternalUpdateEncoderAngle(MotorControlCState* mc);
 /** @brief 按当前编码器 raw 更新速度反馈。 */
 uint8_t MotorControl_InternalUpdateEncoderSpeed(MotorControlCState* mc);
+/** @brief 清空电流 PI 和当前电流给定斜坡状态。 */
+void MotorControl_CurrentReset(MotorControlCState* mc);
+/** @brief 清空速度 PI、速度估算和编码器状态。 */
+void MotorControl_SpeedReset(MotorControlCState* mc);
+/** @brief 运行 Current/Speed 主线快环；Current 也更新速度观察，Speed 额外运行速度 PI。 */
+void MotorControl_CurrentRunFastLoop(MotorControlCState* mc, uint8_t speed_mode);
+/** @brief 获取当前电流环/诊断电压限幅，命令未设置时回退默认值。 */
+int16_t MotorControl_InternalVoltageLimit(const MotorControlCState* mc);
 /** @brief 输出 dq 电压矢量，统一执行限幅、反 Park、SVPWM 和 PWM 使能。 */
 void MotorControl_InternalApplyVoltageVector(MotorControlCState* mc, int16_t vd, int16_t vq,
                                              uint16_t theta);
@@ -163,3 +191,8 @@ void MotorControl_InternalApplyVoltageVector(MotorControlCState* mc, int16_t vd,
 void MotorControl_InternalEnterSafeState(MotorControlCState* mc);
 /** @brief 将编码器电角 count/s 转为 rpm 观察单位。 */
 int16_t MotorControl_InternalSpeedCountsToRpm(int32_t speed);
+/** @brief 填充 Current/Speed/VF 主线 watch 快照。 */
+void MotorControl_WatchFill(const MotorControlCState* mc, MotorControlWatch_t* out);
+/** @brief 将主线 watch 快照逐字段写入 volatile 目标。 */
+void MotorControl_WatchCopyToVolatile(volatile MotorControlWatch_t* dst,
+                                      const MotorControlWatch_t* src);

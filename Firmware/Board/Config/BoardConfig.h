@@ -66,6 +66,14 @@
 /** @brief MA600 磁环角到电机电角度的倍数：转子极对数 / 磁环极对数。 */
 #define MOT_SENSOR_ELEC (MOT_POLE_PAIRS / MOT_SENSOR_POLE_PAIRS)
 /** @brief 传感器方向，使编码器电角度与控制电角度正方向一致。 */
+//#define MOT_SENSOR_DIR (1)
 #define MOT_SENSOR_DIR (1)
 /** @brief 电角度零点偏移。 */
 #define MOT_ELEC_ZERO  -13478//-24000//9577u //0u //38778u
+
+/* MA600 SPI ---------------------------------------------------------------- */
+
+/** @brief MA600 SSP 分频 M，SSPCLK = PCLK / ((M + 1) * N)。 */
+#define MA600_SSP_CLK_M 7U
+/** @brief MA600 SSP 分频 N；当前 64 MHz / ((7 + 1) * 2) = 4 MHz。 */
+#define MA600_SSP_CLK_N 2U

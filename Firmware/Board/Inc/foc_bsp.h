@@ -40,12 +40,6 @@ uint8_t bsp_update_angle(void);
  */
 uint8_t bsp_update_angle_fast(void);
 
-/**
- * @brief 使用 32-bit 帧更新 MA600 角度和 speed 缓存。
- * @return 1 表示更新成功，0 表示 SPI 超时或读取失败。
- */
-uint8_t bsp_update_angle_speed_fast(void);
-
 /** @brief 获取最近一次缓存的 MA600 原始角度。 */
 uint16_t bsp_angle_raw(void);
 
@@ -57,6 +51,3 @@ uint8_t bsp_angle_ok(void);
 
 /** @brief 获取 MA600 缓存年龄。 */
 uint8_t bsp_angle_age(void);
-
-/** @brief 直接读取一次 MA600 原始角度。 */
-uint16_t bsp_read_angle(void);

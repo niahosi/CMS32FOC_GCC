@@ -86,6 +86,14 @@ typedef struct
     uint32_t slow_loop_count;
     /** @brief 有效快环运行次数。 */
     uint32_t fast_loop_count;
+    /** @brief 速度环/编码器 reset 次数。 */
+    uint32_t speed_reset_count;
+    /** @brief 进入 PWM 安全态次数。 */
+    uint32_t safe_state_count;
+    /** @brief 速度环 PI 更新次数。 */
+    uint32_t speed_loop_count;
+    /** @brief 速度给定落入死区导致速度环清零的次数。 */
+    uint32_t speed_deadband_count;
     /** @brief PWM/ADC 同步采样次数。 */
     uint32_t adc_sample_count;
     /** @brief 最近一次 MA600 原始角度。 */
@@ -94,12 +102,34 @@ typedef struct
     uint16_t encoder_elec;
     /** @brief 速度估算采样间隔内 raw 增量。 */
     int16_t encoder_delta;
+    /** @brief 最近一次接受 raw 的单拍步进。 */
+    int16_t encoder_raw_step;
     /** @brief 累计 raw 位置，允许跨 16-bit 回绕。 */
     int32_t encoder_pos;
     /** @brief 角度缓存年龄，超过阈值会判为不可用。 */
     uint8_t encoder_age;
     /** @brief 当前编码器角度是否可用于闭环。 */
     uint8_t encoder_ok;
+    /** @brief 最近一次拒绝 raw 的单拍步进。 */
+    int16_t encoder_reject_step;
+    /** @brief raw 坏角拒绝累计次数。 */
+    uint32_t encoder_reject_count;
+    /** @brief 坏角后即时重读累计次数。 */
+    uint32_t encoder_retry_count;
+    /** @brief 即时重读成功接受累计次数。 */
+    uint32_t encoder_retry_accept_count;
+    /** @brief 最近一次拒绝的 raw。 */
+    uint16_t encoder_reject_raw;
+    /** @brief 最近一次即时重读 raw。 */
+    uint16_t encoder_retry_raw;
+    /** @brief 上一次速度估算使用的 raw，用于排查 prev/raw 不连续。 */
+    uint16_t encoder_prev_raw;
+    /** @brief 因读取失败或坏角而保持上一角度的次数。 */
+    uint32_t encoder_hold_count;
+    /** @brief 速度估算拒绝异常 raw 差分的次数。 */
+    uint32_t speed_reject_count;
+    /** @brief 最近一次被速度估算拒绝的 raw 差分。 */
+    int16_t speed_reject_delta;
     /** @brief 逻辑 U 相电流，内部 ADC count 缩放单位。 */
     int16_t iu_cnt;
     /** @brief 逻辑 V 相电流，内部 ADC count 缩放单位。 */
@@ -116,14 +146,22 @@ typedef struct
     int32_t speed_ref;
     /** @brief 速度给定，rpm 观察单位。 */
     int16_t speed_ref_rpm;
+    /** @brief 速度环内部斜坡后的目标，rpm 观察单位。 */
+    int16_t speed_ref_active_rpm;
     /** @brief 当前选用的速度反馈，编码器电角 count/s。 */
     int32_t speed_fb;
     /** @brief 当前选用的速度反馈，rpm 观察单位。 */
     int16_t speed_fb_rpm;
     /** @brief 速度环 rpm 误差。 */
     int16_t speed_err_rpm;
+    /** @brief 速度环斜率限制前的 q 轴电流目标。 */
+    int16_t speed_iq_target;
     /** @brief 速度环输出的 q 轴电流命令。 */
     int16_t speed_iq_cmd;
+    /** @brief 速度 PI 本体输出，未包含速度前馈。 */
+    int16_t speed_pi_output;
+    /** @brief 速度目标产生的 q 轴电流前馈。 */
+    int16_t speed_iq_ff;
     /** @brief 速度 PI 积分项，定点内部值。 */
     int32_t speed_pi_integral;
     /** @brief Park 后 d 轴电流反馈。 */
@@ -159,6 +197,20 @@ typedef struct
     /** @brief 慢环安全检查快照。 */
     MotorControlCheck_t check;
 } MotorControlWatch_t;
+
+/**
+ * @brief Ozone/主循环写入的电机控制命令入口。
+ *
+ * 该变量是当前主固件公共调试入口，定义在 C 控制层实现中，不放在 main.c。
+ */
+extern volatile MotorControlCommand_t g_motor_cmd;
+
+/**
+ * @brief Ozone 观察用主控制状态快照。
+ *
+ * 主循环通过 MotorControl_UpdateWatch() 刷新该变量。
+ */
+extern volatile MotorControlWatch_t g_motor_watch;
 
 /** @brief 初始化 C 控制层状态和 PI 参数，保持 PWM 关闭。 */
 void MotorControl_Init(void);

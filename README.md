@@ -49,9 +49,9 @@ wsl --import CMS32FOC C:\WSL\CMS32FOC .\cms32foc-toolchain-ubuntu24.04-wsl-rootf
 Useful docs:
 
 - `Docs/Architecture/ProjectStructure.md`
+- `Docs/Architecture/ActiveControlChain.md`
+- `Docs/Architecture/ReadingGuide.md`
 - `Docs/Architecture/StartupAndLinker.md`
-- `Docs/Architecture/CxxMotorAndBoot.md`
-- `Docs/Architecture/MigrationPlan.md`
 - `Docs/VSCode-Tasks.md`
 - `Docs/Toolchain-Setup-zh.md`
 - `Docs/Hardware/Pins.md`

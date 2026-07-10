@@ -15,7 +15,6 @@
 #define MA600_REG_READ_CMD 0xD2u
 #define MA600_REG_WRITE_UNLOCK 0xEAu
 #define MA600_REG_WRITE_KEY 0x54u
-#define MA600_REG_STORE_KEY 0x55u
 #define MA600_REG_BCT 0x02u
 #define MA600_REG_ET 0x03u
 #define MA600_REG_MTSP 0x1Cu
@@ -26,6 +25,7 @@
 #define MA600_DUMMY_BYTE 0x00u
 #define MA600_MAX_AGE 255u
 #define MA600_INIT_RETRY 3u
+#define MA600_CONFIG_RETRY 3u
 
 /** @brief MA600 最近一次角度/speed 读取缓存。 */
 typedef struct
@@ -52,6 +52,7 @@ static uint8_t xfer8(uint8_t tx, uint8_t* rx);
 static uint8_t wait_idle(uint32_t timeout);
 static void cache_fail(void);
 static void init_compensation_defaults(void);
+static uint8_t write_verify_reg(uint8_t addr, uint8_t value);
 
 volatile uint32_t g_ma600_rx_drain_count;
 volatile uint8_t g_ma600_rx_drain_last;
@@ -180,22 +181,6 @@ void ma600_write_reg(uint32_t addr, uint32_t buf)
     cs_high();
 }
 
-/** @brief 兼容旧接口的连续角度读取；addr 当前不参与协议。 */
-uint32_t ma600_read_data(uint32_t addr)
-{
-    uint32_t data;
-
-    (void)addr;
-
-    /* 兼容旧例程命名的直接读角接口，当前 addr 参数不参与连续角度读取。 */
-    cs_low();
-    data = (xfer(MA600_DUMMY_BYTE) << 8);
-    data |= xfer(MA600_DUMMY_BYTE);
-    cs_high();
-
-    return data;
-}
-
 /** @brief 按 MA600 两帧 read 命令读取 SFR/RAM 寄存器。 */
 uint32_t ma600_read_reg(uint32_t cmd)
 {
@@ -214,31 +199,6 @@ uint32_t ma600_read_reg(uint32_t cmd)
     cs_high();
 
     return data;
-}
-
-/** @brief 按 MA600 store key 特殊帧序列触发 NVM block 存储。 */
-void ma600_store_nvm_block(uint8_t block)
-{
-    cs_low();
-    xfer(MA600_REG_WRITE_UNLOCK);
-    xfer(MA600_REG_STORE_KEY);
-    cs_high();
-
-    m0_delay_us(1000);
-
-    cs_low();
-    xfer(MA600_REG_WRITE_UNLOCK);
-    xfer(block);
-    cs_high();
-
-    m0_delay_us(10000);
-
-    cs_low();
-    xfer(MA600_DUMMY_BYTE);
-    xfer(MA600_DUMMY_BYTE);
-    cs_high();
-
-    m0_delay_us(10000);
 }
 
 /** @brief 直接读取一次 16-bit 连续角度，不更新缓存状态。 */
@@ -460,8 +420,8 @@ static void spi_init(void)
 {
     CGC_PER12PeriphClockCmd(CGC_PER12Periph_SPI, ENABLE);
 
-    /* SSPCLK = PCLK / ((M + 1) * N). 当前 64 MHz 下约为 4 MHz. */
-    SSP_ConfigClk(7, 1);
+    /* SSPCLK = PCLK / ((M + 1) * N)。当前默认 64 MHz / ((7 + 1) * 2) = 4 MHz。 */
+    SSP_ConfigClk(MA600_SSP_CLK_M, MA600_SSP_CLK_N);
 
     SSP_ConfigRunMode(SSP_FRAME_SPI, SSP_CPO_0, SSP_CPHA_0, SSP_DAT_LENGTH_8);
     SSP_EnableMasterMode();
@@ -530,9 +490,29 @@ static void init_compensation_defaults(void)
         (uint8_t)(((MOT_ENCODER_SIDE_ETX != 0U) ? MA600_ETX_MASK : 0U) |
                   ((MOT_ENCODER_SIDE_ETY != 0U) ? MA600_ETY_MASK : 0U));
 
-    ma600_write_reg(MA600_REG_BCT, (uint8_t)MOT_ENCODER_SIDE_BCT);
-    m0_delay_us(1000);
-    ma600_write_reg(MA600_REG_ET, et);
-    m0_delay_us(1000);
+    /*
+     * 这里保留旧诊断模块的“写入并回读确认”语义。在线调参 service 已冻结，
+     * 但默认 BCT/ET RAM 补偿仍是主 FOC 角度质量的一部分，不能只写一次就假定成功。
+     */
+    (void)write_verify_reg(MA600_REG_BCT, (uint8_t)MOT_ENCODER_SIDE_BCT);
+    (void)write_verify_reg(MA600_REG_ET, et);
 #endif
+}
+
+/** @brief 写 MA600 RAM 寄存器并回读确认，失败时短重试。 */
+static uint8_t write_verify_reg(uint8_t addr, uint8_t value)
+{
+    uint8_t retry;
+
+    for (retry = 0U; retry < MA600_CONFIG_RETRY; retry++)
+    {
+        ma600_write_reg(addr, value);
+        m0_delay_us(1000);
+        if ((uint8_t)ma600_read_reg(addr) == value)
+        {
+            return 1U;
+        }
+    }
+
+    return 0U;
 }

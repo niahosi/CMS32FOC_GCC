@@ -48,10 +48,20 @@
 #define MOT_CHECK_SUM_CNT_LIMIT 32767
 /** @brief MA600 传感器检查采样次数。 */
 #define MOT_CHECK_MA600_SAMPLES 10u
-/** @brief MA600 角度缓存允许的最大年龄。 */
-#define MOT_ANGLE_MAX_AGE 4u
-/** @brief 单次控制周期允许的最大 MA600 raw 跳变；超过认为是 SPI/角度坏样本。 */
-#define MOT_ENCODER_MAX_STEP_RAW 8192U
+/**
+ * @brief MA600 角度缓存允许的最大年龄，单位为 Current/Speed 快环拍数。
+ *
+ * 20 kHz 电流环下 20 拍约 1 ms。高 iq 调试时 PWM/电流扰动可能造成连续
+ * 数帧 SPI 坏角，先允许短时保持上一角度；超过该窗口仍判编码器故障。
+ */
+#define MOT_ANGLE_MAX_AGE 20u
+/**
+ * @brief 单次控制周期允许的最大 MA600 raw 跳变；超过认为是 SPI/角度坏样本。
+ *
+ * 首帧角度会无条件接受；进入运行后该门限用于拒绝 SPI/角度毛刺。
+ * 20 kHz 快环下，正常 800 rpm 每拍 raw 增量只有几十 count，1024 仍有很大裕量。
+ */
+#define MOT_ENCODER_MAX_STEP_RAW 1024U
 /** @brief MA600 侧轴 BCT 补偿是否启用；只写 RAM 寄存器，不存 NVM。 */
 #define MOT_ENCODER_SIDE_BCT_EN 1U
 /** @brief MA600 侧轴 BCT 强度，按手册 BCT = 258 * (1 - 1 / k)。 */
@@ -122,13 +132,15 @@
 #define CTRL_CUR_SAFE_LIMIT 400
 /** @brief 连续过流计数阈值。 */
 #define CTRL_CUR_OVER_LIMIT 4u
-/** @brief 快环分频，20 kHz ADC/PWM sync / 2 = about 10 kHz current loop. */
-#define CTRL_FAST_LOOP_DIV 2u
+/** @brief 快环分频，20 kHz ADC/PWM sync / 1 = about 20 kHz current loop. */
+#define CTRL_FAST_LOOP_DIV 1u
 
 /* Speed loop -------------------------------------------------------------- */
 
 /** @brief 速度估算和速度 PI 运行频率。 */
-#define CTRL_SPD_EST_HZ 500L
+#define CTRL_SPD_EST_HZ 1000L
+/** @brief 模式切入后跳过的速度估算窗口数，避免初始 raw/prev raw 不连续导致速度尖峰。 */
+#define CTRL_SPD_STARTUP_BLANK_SAMPLES 4U
 #define CTRL_SPD_FB_SOURCE_DIFF 0U
 #define CTRL_SPD_FB_SOURCE_MA600 1U
 /** @brief 速度环反馈源：MA600 speed 当前低速尖峰偏大，默认先用角度差分。 */
@@ -140,36 +152,47 @@
 /** @brief MA600 speed 单次允许跳变，单位 rpm；超过则认为是低速尖峰。 */
 #define CTRL_SPD_MA600_SPIKE_RPM 300
 /** @brief MA600 speed 原始低通滤波右移，值越大越平滑。 */
-#define CTRL_SPD_MA600_FILTER_SHIFT 5u
-/** @brief 角度差分测速累计窗口，500 Hz 下 4 点约 8 ms。 */
-#define CTRL_SPD_DIFF_WINDOW_SAMPLES 4u
+#define CTRL_SPD_MA600_FILTER_SHIFT 4u
+/**
+ * @brief 角度差分测速的单次跳变拒绝阈值，单位机械 rpm。
+ *
+ * 这里保护的是 1 kHz 速度采样间隔内的 raw 差分，不是 20 kHz 快环单拍角度
+ * 门限。5000 rpm 下每个 1 ms 速度样本约 21845 raw count；6500 rpm 仍低于
+ * int16 raw 差分半圈限制，可以放过正常高速，同时拒绝接近半圈的毛刺。
+ */
+#define CTRL_SPD_DIFF_SPIKE_RPM 6500L
 /** @brief 速度估算位置死区。 */
 #define CTRL_SPD_POS_DEADBAND 16L
 /** @brief 速度反馈归零吸附阈值。 */
 #define CTRL_SPD_ZERO_SNAP 500L
-/** @brief 速度环比例系数，PI 输入为 rpm 误差；默认 1 iq/rpm。 */
-#define CTRL_SPD_KP 64
-/** @brief 速度环积分系数，初调默认关闭积分，确认方向后再在 Ozone 中逐步加到 1。 */
-#define CTRL_SPD_KI 0
+/** @brief 速度环比例系数，PI 输入为 rpm 误差；32/1024 = 0.03125 iq/rpm。 */
+#define CTRL_SPD_KP 32
+/** @brief 速度环积分系数，用于消除稳定速度误差；3/1024 iq/rpm/sample。 */
+#define CTRL_SPD_KI 3
 /** @brief 速度误差缩放右移位数。 */
-#define CTRL_SPD_ERR_SHIFT 6u
+#define CTRL_SPD_ERR_SHIFT 10u
 /** @brief 速度反馈滤波右移位数。 */
-#define CTRL_SPD_FILTER_SHIFT 3u
+#define CTRL_SPD_FILTER_SHIFT 2u
 /** @brief 速度给定小于该 rpm 时认为是停机命令，防止零速抖动。 */
 #define CTRL_SPD_CMD_DEADBAND_RPM 5
-/** @brief 速度给定限幅。 */
-#define CTRL_SPD_REF_LIMIT 3000000L
-/** @brief 速度环默认 iq 限幅；速度环初调先用低扭矩上限，确认稳定后再上调。 */
-#define CTRL_SPD_IQ_LIMIT 30
-/** @brief 速度环输出 iq 命令每个 500 Hz 速度周期允许变化的最大 count。 */
-#define CTRL_SPD_IQ_SLEW_STEP 1
+/** @brief 速度目标斜坡，单位 rpm/s；低惯量空心杯电机先用温和斜坡。 */
+#define CTRL_SPD_REF_RAMP_RPM_PER_S 2000L
+/** @brief 速度给定限幅，机械 rpm；Ozone speed_ref_rpm 会先换算再按该值限幅。 */
+#define CTRL_SPD_REF_LIMIT_RPM 5000L
+/** @brief 速度给定限幅，编码器电角 count/s。 */
+#define CTRL_SPD_REF_LIMIT \
+    ((CTRL_SPD_REF_LIMIT_RPM * (long)MOT_SENSOR_CPR * (long)MOT_SENSOR_POLE_PAIRS) / 60L)
+/** @brief 速度环默认 iq 限幅；80 count 约 0.44 A，4 ohm 电机上压降约 1.76 V。 */
+#define CTRL_SPD_IQ_LIMIT 80
+/** @brief 速度环输出 iq 命令每个 1 kHz 速度周期允许变化的最大 count。 */
+#define CTRL_SPD_IQ_SLEW_STEP 4
 
 /* Open loop VF/IF --------------------------------------------------------- */
 
-/** @brief VF/IF 开环调试默认速度给定，单位 sensor counts/s，约 36 rpm 机械。 */
-#define OL_SPEED_REF 400l
+/** @brief VF/IF 开环调试默认速度给定，单位 sensor counts/s。 */
+#define OL_SPEED_REF 50l
 /** @brief VF 开环默认电压幅值。 */
-#define OL_VF_VOLTAGE 320
+#define OL_VF_VOLTAGE 80
 /** @brief IF 开环默认 q 轴电流给定。 */
 #define OL_IF_IQ_REF 200
 /** @brief IF 开环默认 d 轴电流给定。 */

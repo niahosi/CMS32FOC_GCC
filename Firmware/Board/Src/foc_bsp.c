@@ -55,12 +55,6 @@ uint8_t bsp_update_angle_fast(void)
 #endif
 }
 
-/** @brief 强制使用 32-bit angle+speed 帧更新 MA600 缓存。 */
-uint8_t bsp_update_angle_speed_fast(void)
-{
-    return ma600_update_speed_fast();
-}
-
 /** @brief 获取最近缓存的 MA600 raw。 */
 uint16_t bsp_angle_raw(void)
 {
@@ -83,12 +77,6 @@ uint8_t bsp_angle_ok(void)
 uint8_t bsp_angle_age(void)
 {
     return ma600_age();
-}
-
-/** @brief 直接同步读取一次 MA600 raw。 */
-uint16_t bsp_read_angle(void)
-{
-    return ma600_read_angle();
 }
 
 /**

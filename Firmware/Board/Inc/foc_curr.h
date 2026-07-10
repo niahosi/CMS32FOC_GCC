@@ -11,23 +11,11 @@
 /** @brief 初始化 ADC、ADCLDO 和三相电流 PGA。 */
 void curr_init(void);
 
-/** @brief 执行一次软件触发三相原始 ADC 采样。 */
-void curr_sample_raw(void);
-
 /**
  * @brief 在 PWM 关闭状态下采集静态电流零漂。
  * @param samples 每相平均采样次数。
  */
 void curr_calib(uint16_t samples);
-
-/**
- * @brief 在 PWM 运行配置下重新采集电流零漂。
- * @param samples 每相平均采样次数。
- */
-void curr_calib_pwm(uint16_t samples);
-
-/** @brief 根据最新 raw ADC 值更新三相电流缓存。 */
-void curr_update(void);
 
 /** @brief 启动 PWM 触发 ADC 同步采样。 */
 void curr_sync_init(void);
@@ -52,12 +40,6 @@ int16_t curr_u(void);
 int16_t curr_v(void);
 int16_t curr_w(void);
 int16_t curr_sum(void);
-
-/** @brief 获取物理采样通道 U/V/W 电流 count。 */
-int16_t curr_raw_u(void);
-int16_t curr_raw_v(void);
-int16_t curr_raw_w(void);
-int16_t curr_raw_sum(void);
 
 /** @brief 获取未扣零漂的 U/V/W ADC 原始码值。 */
 uint16_t curr_raw_adc_u(void);

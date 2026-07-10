@@ -84,15 +84,15 @@ q 轴没有持续转矩
 
 如果某个 zero 下 `id` 看起来很小，但电机不转或像锁住一样，这个点不能作为工作零位。它可能只是让当前测得的 dq 投影变得安静，并不代表真实 q 轴转矩正确。
 
-推荐调零流程：
+当前 `cms32foc` 主固件已冻结 Align 诊断入口。若后续需要重新跑自动 Align，先从 `Firmware/FrozenDiagnostics/MotorControl/motor_control_diag_frozen.c` 恢复到主控制层并加入 CMake；否则用手动 `elec_zero_trim` 扫描更符合当前精简主线。
+
+推荐手动调零流程：
 
 ```text
-1. control_mode = 4 做 align，得到 align_zero_trim。
-2. 把 align_zero_trim 写入 g_motor_cmd.elec_zero_trim。
-3. 切 control_mode = 1。
-4. 使用 id_ref = 0，iq_ref = 20/30/40。
-5. 围绕当前 zero 扫 elec_zero_trim。
-6. 选择能转、声音顺、id 均值较小的点。
+1. 切 control_mode = 1。
+2. 使用 id_ref = 0，iq_ref = 20/30/40。
+3. 围绕当前 zero 扫 elec_zero_trim。
+4. 选择能转、声音顺、id 均值较小的点。
 ```
 
 ## Static id And Dynamic id

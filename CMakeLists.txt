@@ -167,7 +167,11 @@ target_link_libraries(cms32_foc_algorithm PUBLIC
 # C++ 控制层源码冻结，不创建库目标。
 add_library(cms32_motor_control_c STATIC
     Firmware/MotorControl/C/motor_control_c.c
+    Firmware/MotorControl/C/motor_control_current.c
+    Firmware/MotorControl/C/motor_control_encoder.c
+    Firmware/MotorControl/C/motor_control_output.c
     Firmware/MotorControl/C/motor_control_vf.c
+    Firmware/MotorControl/C/motor_control_watch.c
 )
 target_include_directories(cms32_motor_control_c PUBLIC
     Firmware/MotorControl/C
@@ -182,6 +186,7 @@ target_link_libraries(cms32_motor_control_c PUBLIC
 # cms32_motor_control_c 中稳定，C++ 控制层后续再按验证结果恢复。
 add_executable(cms32foc
     Firmware/App/main.c
+    Firmware/App/screw_axis.c
     ${CMS32_PLATFORM_DIR}/startup_CMS32M6510_gcc.S
 )
 target_link_libraries(cms32foc PRIVATE
@@ -189,9 +194,9 @@ target_link_libraries(cms32foc PRIVATE
 )
 cms32_configure_firmware(cms32foc)
 
-# 板级观察诊断固件。它初始化板级硬件，保持 PWM 功率输出安全关闭，
-# 并暴露 g_board_watch 给 Ozone Watch。
-add_executable(cms32_board_watch_test
+# 板级观察诊断固件。默认 all build 不构建它；需要时指定 target 手动构建。
+# 它初始化板级硬件，保持 PWM 功率输出安全关闭，并暴露 g_board_watch 给 Ozone Watch。
+add_executable(cms32_board_watch_test EXCLUDE_FROM_ALL
     Firmware/Tests/BoardWatch/main_board_watch.c
     ${CMS32_PLATFORM_DIR}/startup_CMS32M6510_gcc.S
 )
@@ -200,9 +205,9 @@ target_link_libraries(cms32_board_watch_test PRIVATE
 )
 cms32_configure_firmware(cms32_board_watch_test)
 
-# 启动冒烟诊断固件。最小 C 测试，用于验证向量表、Reset 入口、
-# .data/.bss 初始化，以及能否进入 main 循环。
-add_executable(cms32_startup_smoke_test
+# 启动冒烟诊断固件。默认 all build 不构建它；需要时指定 target 手动构建。
+# 最小 C 测试用于验证向量表、Reset 入口、.data/.bss 初始化，以及能否进入 main 循环。
+add_executable(cms32_startup_smoke_test EXCLUDE_FROM_ALL
     Firmware/Tests/StartupSmoke/main_startup_smoke.c
     ${CMS32_PLATFORM_DIR}/startup_CMS32M6510_gcc.S
 )
