@@ -1,6 +1,6 @@
 # CMS32FOC_GCC Hardware Pins
 
-本文记录当前 `cms32foc` 主固件实际使用的板级引脚和外设设置。更完整的软件链路见 `Docs/Architecture/ActiveControlChain.md`。
+本文记录当前 `cms32foc` 主固件实际使用的板级引脚和外设设置。更完整的软件链路见 `Docs/Architecture/CurrentProgramBuildAndReadMap.md`。
 
 ## Pin Mapping
 

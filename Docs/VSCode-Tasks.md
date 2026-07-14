@@ -17,7 +17,6 @@ This project keeps the VS Code task list short. Use `Terminal -> Run Task...` fo
 
 - `cms32foc`
 - `cms32_board_watch_test`
-- `cms32_startup_smoke_test`
 
 The selected item is flashed by piping inline J-Link commands to Windows `JLink.exe`; the repository does not keep `.jlink` command files.
 
@@ -27,10 +26,9 @@ Test firmwares are still available from the command line:
 
 ```sh
 cmake --build --preset gcc-debug --target cms32_board_watch_test
-cmake --build --preset gcc-debug --target cms32_startup_smoke_test
 ```
 
-C++ targets are frozen and not defined in the current default CMake project.
+C++ is enabled in CMake for new modules, but the current task list only builds the active firmware and diagnostic targets.
 
 ## Ozone
 
@@ -39,5 +37,4 @@ Use Ozone to load the matching ELF symbols after flashing:
 ```text
 build/gcc-debug/cms32foc
 build/gcc-debug/cms32_board_watch_test
-build/gcc-debug/cms32_startup_smoke_test
 ```

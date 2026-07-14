@@ -15,8 +15,6 @@ cmake --build --preset gcc-debug --target cms32foc
 Diagnostic firmwares can still be built explicitly:
 
 ```sh
-cmake --build --preset gcc-debug --target cms32_startup_smoke_test
-cmake --build --preset gcc-debug --target cms32_cpp_smoke_test
 cmake --build --preset gcc-debug --target cms32_board_watch_test
 ```
 
@@ -33,8 +31,6 @@ Then choose one target:
 ```text
 cms32foc
 cms32_board_watch_test
-cms32_cpp_smoke_test
-cms32_startup_smoke_test
 ```
 
 ## Manual PowerShell Example
@@ -53,7 +49,5 @@ After flashing, open Ozone and load only the matching ELF for symbols:
 
 ```text
 \\wsl.localhost\Ubuntu\home\jove\workspace\01-Projects\Embedded\CMS32FOC_GCC\build\gcc-debug\cms32foc
-\\wsl.localhost\Ubuntu\home\jove\workspace\01-Projects\Embedded\CMS32FOC_GCC\build\gcc-debug\cms32_startup_smoke_test
-\\wsl.localhost\Ubuntu\home\jove\workspace\01-Projects\Embedded\CMS32FOC_GCC\build\gcc-debug\cms32_cpp_smoke_test
 \\wsl.localhost\Ubuntu\home\jove\workspace\01-Projects\Embedded\CMS32FOC_GCC\build\gcc-debug\cms32_board_watch_test
 ```

@@ -68,7 +68,7 @@ typedef struct
 } MotorControlCheck_t;
 
 /**
- * @brief Current/Speed 主线 Ozone watch。
+ * @brief Current/Speed 主线状态/遥测快照。
  *
  * 只保留 Current/Speed 闭环调试必须字段，以及 VF 应急开环的少量观察字段。
  */
@@ -198,6 +198,9 @@ typedef struct
     MotorControlCheck_t check;
 } MotorControlWatch_t;
 
+/** @brief 更正式的命名：status 表示对外状态快照；保留 Watch_t 兼容旧调试习惯。 */
+typedef MotorControlWatch_t MotorControlStatus_t;
+
 /**
  * @brief Ozone/主循环写入的电机控制命令入口。
  *
@@ -211,6 +214,16 @@ extern volatile MotorControlCommand_t g_motor_cmd;
  * 主循环通过 MotorControl_UpdateWatch() 刷新该变量。
  */
 extern volatile MotorControlWatch_t g_motor_watch;
+
+/*
+ * Preferred source-level names.
+ *
+ * The actual exported debug symbols remain g_motor_cmd/g_motor_watch for now,
+ * so existing Ozone watch expressions do not break. New code should prefer
+ * command/status terminology.
+ */
+#define g_motor_command g_motor_cmd
+#define g_motor_status g_motor_watch
 
 /** @brief 初始化 C 控制层状态和 PI 参数，保持 PWM 关闭。 */
 void MotorControl_Init(void);

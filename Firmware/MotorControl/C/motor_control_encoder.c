@@ -99,6 +99,7 @@ static uint8_t encoder_raw_plausible(MotorControlCState* mc, uint16_t raw)
 
     if (mc->encoder_initialized == 0U)
     {
+        /* 首帧没有上一帧可比较，必须无条件接受以建立基准。 */
         return 1U;
     }
 
@@ -190,6 +191,7 @@ static uint8_t update_encoder_angle_state(MotorControlCState* mc)
 
     if (encoder_raw_plausible(mc, raw) == 0U)
     {
+        /* 单帧 SPI/角度毛刺很常见，先即时重读一次，失败才保持上一角度。 */
         if (retry_encoder_angle(mc) != 0U)
         {
             return 1U;
@@ -225,6 +227,10 @@ static uint8_t update_encoder_speed_state(MotorControlCState* mc)
     max_delta = speed_diff_max_delta_raw();
     if ((delta > (int16_t)max_delta) || (delta < -(int16_t)max_delta))
     {
+        /*
+         * 速度估算的异常 raw 差分按“拒绝但不断流”处理：
+         * 更新 prev_raw，清本次差分速度，避免同一个毛刺在下一次继续累积。
+         */
         mc->speed_reject_count++;
         mc->speed_reject_delta = delta;
         mc->encoder_prev_raw = raw;
@@ -239,6 +245,7 @@ static uint8_t update_encoder_speed_state(MotorControlCState* mc)
 
     if (mc->speed_startup_blank != 0U)
     {
+        /* 模式切入后的前几次速度样本只建立 prev/raw 连续性，不输出速度。 */
         mc->speed_startup_blank--;
         mc->speed_fb = 0;
         mc->speed_fb_diff = 0;
@@ -250,6 +257,7 @@ static uint8_t update_encoder_speed_state(MotorControlCState* mc)
         delta = 0;
     }
 
+    /* delta 是每个速度采样周期的 raw 增量，乘采样频率得到 raw count/s。 */
     speed_sample = (int32_t)delta * (int32_t)CTRL_SPD_EST_HZ * (int32_t)MOT_SENSOR_DIR;
     mc->speed_fb_diff += (speed_sample - mc->speed_fb_diff) >> CTRL_SPD_FILTER_SHIFT;
 

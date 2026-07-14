@@ -9,7 +9,7 @@
 
 #include "CMS32M6510.h"
 
-volatile MotorControlCommand_t g_motor_cmd = {
+volatile MotorControlCommand_t g_motor_command = {
     .enable = 0U,
     .control_mode = 0U,
     .id_ref = 0,
@@ -31,7 +31,7 @@ volatile MotorControlCommand_t g_motor_cmd = {
     .voltage_theta_offset = 0,
 };
 
-volatile MotorControlWatch_t g_motor_watch;
+volatile MotorControlWatch_t g_motor_status;
 
 static MotorControlCState s_mc;
 

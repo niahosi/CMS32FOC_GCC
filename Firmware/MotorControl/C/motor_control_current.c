@@ -8,7 +8,7 @@ static int16_t slew_speed_iq(int16_t current, int16_t target);
 static int32_t speed_ref_ramp_step_counts(void);
 static void update_speed_loop(MotorControlCState* mc);
 
-/** @brief 清空电流 PI 和当前电流给定斜坡状态。 */
+/** @brief 清空电流 PI 和当前电流给定斜坡状态，不改变命令缓存。 */
 void MotorControl_CurrentReset(MotorControlCState* mc)
 {
     foc_pi_reset(&mc->current_pi_d);
@@ -19,7 +19,7 @@ void MotorControl_CurrentReset(MotorControlCState* mc)
     mc->iq_ref_active = 0;
 }
 
-/** @brief 清空速度 PI、速度估算和编码器状态。 */
+/** @brief 清空速度 PI、速度估算和编码器状态，用于模式切换和闭环重入。 */
 void MotorControl_SpeedReset(MotorControlCState* mc)
 {
     mc->speed_reset_count++;
@@ -53,12 +53,20 @@ void MotorControl_CurrentRunFastLoop(MotorControlCState* mc, uint8_t speed_mode)
         return;
     }
 
+    /*
+     * ADC/PWM 同步频率可以高于电流环执行频率。
+     * 分频返回时仍保留最新电流采样，方便 watch 看到实时电流。
+     */
     if (++mc->current_loop_div < CTRL_FAST_LOOP_DIV)
     {
         return;
     }
     mc->current_loop_div = 0U;
 
+    /*
+     * Current 模式也需要电角度做 Park/InvPark，所以 Current/Speed
+     * 都必须在电流环执行拍读取并校验编码器角度。
+     */
     if (MotorControl_InternalUpdateEncoderAngle(mc) == 0U)
     {
         mc->state = MC_STATE_FAULT;
@@ -67,6 +75,10 @@ void MotorControl_CurrentRunFastLoop(MotorControlCState* mc, uint8_t speed_mode)
         return;
     }
 
+    /*
+     * 速度估算和速度 PI 低频运行。Current 模式仍更新速度反馈，
+     * 这样电流环调试时可以同步观察 speed_fb_rpm。
+     */
     if (++mc->speed_sample_div >= MC_SPEED_SAMPLE_DIV)
     {
         mc->speed_sample_div = 0U;
@@ -85,10 +97,12 @@ void MotorControl_CurrentRunFastLoop(MotorControlCState* mc, uint8_t speed_mode)
 
     if (speed_mode != 0U)
     {
+        /* Speed 模式由外环 PI 输出 q 轴电流给定。 */
         iq_ref = mc->speed_iq_ref;
     }
     else
     {
+        /* Current 模式直接使用命令中的 q 轴电流给定。 */
         iq_ref = mc->command.iq_ref;
     }
 
@@ -100,6 +114,10 @@ void MotorControl_CurrentRunFastLoop(MotorControlCState* mc, uint8_t speed_mode)
                                mc->command.iq_limit),
                  CTRL_CUR_REF_RAMP_STEP);
 
+    /*
+     * voltage_theta_offset 是调试用相位提前/滞后入口，只影响电流环角度，
+     * 不改变编码器 raw/electrical 观察值。
+     */
     theta_used = (uint16_t)(mc->encoder_elec + (uint16_t)mc->command.voltage_theta_offset);
     current_ab = foc_clarke_3phase(mc->current);
     mc->current_dq = foc_park(current_ab, theta_used);
@@ -178,6 +196,10 @@ static void update_speed_loop(MotorControlCState* mc)
     mc->speed_err_rpm = (int16_t)foc_clamp_s32((int32_t)ref_rpm - (int32_t)fb_rpm,
                                                -32768, 32767);
 
+    /*
+     * 速度给定接近 0 时直接清 PI 和斜坡，避免零速附近积分保持造成抖动。
+     * 判据使用原始目标 ref_target_rpm，而不是 ramp 后的 ref_rpm。
+     */
     if ((ref_target_rpm > -CTRL_SPD_CMD_DEADBAND_RPM) &&
         (ref_target_rpm < CTRL_SPD_CMD_DEADBAND_RPM))
     {

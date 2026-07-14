@@ -162,7 +162,6 @@ cmake --build --preset gcc-debug --target cms32foc
 诊断固件命令：
 
 ```sh
-cmake --build --preset gcc-debug --target cms32_startup_smoke_test
 cmake --build --preset gcc-debug --target cms32_board_watch_test
 ```
 

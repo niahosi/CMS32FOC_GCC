@@ -1,13 +1,42 @@
+CompileFlags:
+  Remove:
+    - -mthumb*
+    - -mfloat-abi=*
+    - -mfpu=*
+    - -mcpu=*
+    - -fsingle-precision-constant
+    - -fno-common
+    - -ffunction-sections
+    - -fdata-sections
+  Add:
+    - -Wno-unknown-attributes
+    - -Wno-ignored-attributes
+
 Diagnostics:
+  UnusedIncludes: Strict
+  MissingIncludes: Strict
   ClangTidy:
     Add:
       - bugprone-*
       - performance-*
       - readability-braces-around-statements
       - readability-const-return-type
+      - modernize-use-nullptr
+      - modernize-use-override
+      - modernize-use-using
+      - misc-*
     Remove:
       - bugprone-easily-swappable-parameters
       - readability-magic-numbers
+    CheckOptions:
+      modernize-use-auto.MinTypeNameLength: "5"
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes
+  Designators: Yes
+
 ---
 If:
   PathMatch: Firmware/ThirdParty/.*

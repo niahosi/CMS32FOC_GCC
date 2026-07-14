@@ -7,7 +7,25 @@ TabWidth: 4
 UseTab: Never
 ColumnLimit: 100
 
-BreakBeforeBraces: Allman
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterCaseLabel: true
+  AfterClass: true
+  AfterControlStatement: Always
+  AfterEnum: true
+  AfterExternBlock: false
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: true
+  BeforeWhile: false
+  IndentBraces: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+  SplitEmptyNamespace: true
 AllowShortFunctionsOnASingleLine: None
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
@@ -22,6 +40,7 @@ SortIncludes: Never
 IncludeBlocks: Preserve
 
 NamespaceIndentation: None
+IndentExternBlock: NoIndent
 CompactNamespaces: false
 FixNamespaceComments: true
 
