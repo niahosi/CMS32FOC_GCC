@@ -1,10 +1,12 @@
 #include "foc_ma600.h"
 #include "Config.h"
+#include "TuneConfig.h"
 #include "cgc.h"
 #include "common.h"
 #include "delay.h"
 #include "gpio.h"
 #include "ssp.h"
+#include <stdint.h>
 
 /**
  * @file foc_ma600.c

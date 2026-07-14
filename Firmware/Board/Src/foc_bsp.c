@@ -10,6 +10,7 @@
 #include "CMS32M6510.h"
 #include "delay.h"
 #include "gpio.h"
+#include <stdint.h>
 
 static void clock_init(void);
 static void gpio_init(void);

@@ -1,9 +1,13 @@
 #include "foc_pwm.h"
+#include "BoardConfig.h"
+#include "CMS32M6510.h"
+#include "TuneConfig.h"
 #include "foc_curr.h"
 #include "cgc.h"
 #include "common.h"
 #include "epwm.h"
 #include "gpio.h"
+#include <stdint.h>
 
 /**
  * @file foc_pwm.c
@@ -44,7 +48,7 @@ static PwmState s_pwm = {
 
 static void driver_en(uint8_t en);
 static uint16_t clamp_duty(uint16_t duty);
-static void map_pwm_duty(uint16_t u_in, uint16_t v_in, uint16_t w_in, PwmDuty* out);
+static void map_pwm_duty(uint16_t u_in, uint16_t v_in, uint16_t w_in, PwmDuty *out);
 static void pins_init(void);
 static void adc_trigger_apply(void);
 static void adc_trigger_update(void);
@@ -109,7 +113,7 @@ void pwm_set_duty(uint16_t duty_u, uint16_t duty_v, uint16_t duty_w)
 }
 
 /** @brief 按 TuneConfig 相序映射三相 duty，并执行 duty 安全限幅。 */
-static void map_pwm_duty(uint16_t u_in, uint16_t v_in, uint16_t w_in, PwmDuty* out)
+static void map_pwm_duty(uint16_t u_in, uint16_t v_in, uint16_t w_in, PwmDuty *out)
 {
 #if (MOT_PWM_PHASE_MAP == MOT_PHASE_MAP_UWV)
     out->u = clamp_duty(u_in);
@@ -232,9 +236,11 @@ uint8_t pwm_enable(uint8_t enable)
 }
 
 /** @brief 将 PWM 当前状态复制到 watch/诊断变量。 */
-void pwm_snapshot(volatile uint16_t* duty_u, volatile uint16_t* duty_v,
-                  volatile uint16_t* duty_w, volatile uint8_t* output_on,
-                  volatile uint8_t* brake_on)
+void pwm_snapshot(volatile uint16_t *duty_u,
+                  volatile uint16_t *duty_v,
+                  volatile uint16_t *duty_w,
+                  volatile uint8_t *output_on,
+                  volatile uint8_t *brake_on)
 {
     *duty_u = s_pwm.duty.u;
     *duty_v = s_pwm.duty.v;
@@ -307,13 +313,10 @@ static void pins_init(void)
 static void adc_trigger_apply(void)
 {
 #if (CS_MULTI_EN != 0U)
-    EPWM_ConfigCompareTriger(EPWM_CMPTG_0, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0,
-                             s_pwm.trig_a);
-    EPWM_ConfigCompareTriger(EPWM_CMPTG_1, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0,
-                             s_pwm.trig_b);
+    EPWM_ConfigCompareTriger(EPWM_CMPTG_0, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0, s_pwm.trig_a);
+    EPWM_ConfigCompareTriger(EPWM_CMPTG_1, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0, s_pwm.trig_b);
 #else
-    EPWM_ConfigCompareTriger(EPWM_CMPTG_0, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0,
-                             s_pwm.trig);
+    EPWM_ConfigCompareTriger(EPWM_CMPTG_0, EPWM_CMPTG_FALLING, EPWM_CMPTG_EPWM0, s_pwm.trig);
 #endif
 }
 

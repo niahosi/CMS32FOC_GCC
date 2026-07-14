@@ -5,6 +5,7 @@
 #include "cgc.h"
 #include "gpio.h"
 #include "pga.h"
+#include <stdint.h>
 
 /**
  * @file foc_curr.c
