@@ -66,10 +66,10 @@
 /** @brief MA600 磁环角到电机电角度的倍数：转子极对数 / 磁环极对数。 */
 #define MOT_SENSOR_ELEC (MOT_POLE_PAIRS / MOT_SENSOR_POLE_PAIRS)
 /** @brief 传感器方向，使编码器电角度与控制电角度正方向一致。 */
-//#define MOT_SENSOR_DIR (1)
+// #define MOT_SENSOR_DIR (1)
 #define MOT_SENSOR_DIR (1)
 /** @brief 电角度零点偏移。 */
-#define MOT_ELEC_ZERO  -13478//-24000//9577u //0u //38778u
+#define MOT_ELEC_ZERO -13478 //-24000//9577u //0u //38778u
 
 /* MA600 SPI ---------------------------------------------------------------- */
 
@@ -77,3 +77,20 @@
 #define MA600_SSP_CLK_M 7U
 /** @brief MA600 SSP 分频 N；当前 64 MHz / ((7 + 1) * 2) = 4 MHz。 */
 #define MA600_SSP_CLK_N 2U
+
+/* Board UART --------------------------------------------------------------- */
+
+/** @brief 开发期 UART bring-up 开关；打开后会在延时窗口后复用 P06/P07。 */
+#define BOARD_UART_ENABLE 1U
+/** @brief 开发期 UART 波特率；先用 9600 验证链路稳定性，再逐步提高。 */
+#define BOARD_UART_BAUD 2000000U // 921600U
+/** @brief 上电后保留 SWD 连接窗口，再禁用 SWD 并把 P06/P07 切成 UART。 */
+#define BOARD_UART_SW_RELEASE_DELAY_MS 20000U
+/** @brief P06/RXD 输入电平模式：1=TTL 输入，0=施密特输入；当前用施密特抗边沿噪声。 */
+#define BOARD_UART_RX_TTL_INPUT 0U
+/** @brief UART END 访问结束写入；访问 UART 寄存器后再碰其他外设前必须写 END。 */
+#define BOARD_UART_USE_END_LOCK 1U
+/** @brief UART 调试期优先保证 RX 及时响应；数值越小优先级越高。 */
+#define BOARD_UART_IRQ_PRIORITY 0U
+/** @brief UART 调试期暂时降低 ADC 快环优先级，避免单字节 RX buffer 溢出。 */
+#define BOARD_UART_ADC_IRQ_PRIORITY 1U

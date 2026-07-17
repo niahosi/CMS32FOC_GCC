@@ -1,8 +1,10 @@
+#include "MotorControl.h"
 #include "motor_control_internal.h"
 #include "motor_control_vf.h"
 
 #include "foc_curr.h"
 #include "foc_pwm.h"
+#include <stdint.h>
 
 /** @brief 填充 Current/Speed/VF 主线 watch 快照。 */
 void MotorControl_WatchFill(const MotorControlCState* mc, MotorControlWatch_t* out)
@@ -50,8 +52,8 @@ void MotorControl_WatchFill(const MotorControlCState* mc, MotorControlWatch_t* o
     out->i_sum = curr_sum();
     out->id_ref = mc->id_ref_active;
     out->iq_ref = mc->iq_ref_active;
-    out->speed_ref = mc->command.speed_ref;
-    out->speed_ref_rpm = MotorControl_InternalSpeedCountsToRpm(mc->command.speed_ref);
+    out->speed_ref = mc->speed_command.speed_ref;
+    out->speed_ref_rpm = MotorControl_InternalSpeedCountsToRpm(mc->speed_command.speed_ref);
     out->speed_ref_active_rpm = MotorControl_InternalSpeedCountsToRpm(mc->speed_ref_active);
     out->speed_fb = mc->speed_fb;
     out->speed_fb_rpm = MotorControl_InternalSpeedCountsToRpm(mc->speed_fb);
@@ -69,7 +71,7 @@ void MotorControl_WatchFill(const MotorControlCState* mc, MotorControlWatch_t* o
     out->open_loop_theta = MotorControlVf_OpenLoopTheta();
     out->open_loop_ticks = MotorControlVf_OpenLoopTicks();
     out->open_loop_reset_count = MotorControlVf_OpenLoopResetCount();
-    out->vf_voltage = mc->command.vf_voltage;
+    out->vf_voltage = mc->vf_command.vf_voltage;
     out->v_limited = mc->voltage_limited;
     out->duty_u = (uint16_t)duty_u;
     out->duty_v = (uint16_t)duty_v;

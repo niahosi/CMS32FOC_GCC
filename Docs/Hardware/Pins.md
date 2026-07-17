@@ -18,8 +18,20 @@
 | V current PGA input | P24/P25 | PGA1 差分输入 |
 | W current PGA input | P26/P27 | PGA2 差分输入 |
 | ADC current channels | PGA0/PGA1/PGA2 outputs | `ADC_CH_0`, `ADC_CH_2`, `ADC_CH_3` |
+| Board UART RX/TX | P06 = `U1_RX`, P07 = `U1_TX` | 开发期开关 `BOARD_UART_ENABLE`；上电延时后才切到 `RXD` / `TXD` |
 
-P06/P07 不配置，避免开发阶段影响调试器连接。
+P06/P07 与调试连接复用。开发期默认保留 `BOARD_UART_SW_RELEASE_DELAY_MS`
+窗口，延时结束后才配置 UART，避免上电立刻抢占 SWD。
+切到 UART 前需要主动置位 `DBG->DBGSTOPCR` 的 `SWDIS` 位，释放 P06/P07 的
+SWDCLK/SWDIO 功能。
+
+`U1_RX` / `U1_TX` 是 MCU 侧方向。外接 USB-TTL 时需要交叉连接：
+USB-TTL TX 接 `U1_RX`，USB-TTL RX 接 `U1_TX`，并共地。
+
+UART0 访问还有一个总线访问要求：访问 UART 寄存器后，如果后续要访问其它外设
+寄存器，必须先写 `UART0->END = 0`。当前 UART 调试路径按已验证形式收敛为：
+所有已启用中断入口先写 END；`UART0_IRQHandler()` 处理 RX ready 并调用轻量
+协议入口，回复数据写入 TX ring；`ADC_IRQHandler()` 每次最多推进发送一个字节。
 
 ## PWM
 
@@ -50,4 +62,4 @@ P06/P07 不配置，避免开发阶段影响调试器连接。
 
 `ma600_init()` 使用 SSP SPI mode 0、8-bit、手动 CS。当前上电会写 MA600 RAM BCT/ET 默认补偿并回读确认，不写 NVM。
 
-当前默认快环读 16-bit angle frame。32-bit angle+speed frame 代码保留，但 `MOT_ENCODER_FAST_READ_SPEED_FRAME = 0` 时不启用。
+当前快环只读 MA600 16-bit 角度帧。速度反馈由控制层按角度 raw 差分估算。

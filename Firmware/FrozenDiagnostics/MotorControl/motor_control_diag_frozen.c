@@ -123,10 +123,6 @@ void MotorControlDiag_FillWatch(const MotorControlCState* mc, MotorControlDiagWa
     out->align_delta_sum = s_diag.align_delta_sum;
     out->speed_fb_diff = mc->speed_fb_diff;
     out->speed_fb_diff_rpm = MotorControl_InternalSpeedCountsToRpm(mc->speed_fb_diff);
-    out->speed_fb_ma600 = mc->speed_fb_ma600;
-    out->speed_fb_ma600_rpm = MotorControl_InternalSpeedCountsToRpm(mc->speed_fb_ma600);
-    out->ma600_speed_raw = mc->ma600_speed_raw;
-    out->speed_fb_source = CTRL_SPD_FB_SOURCE;
     out->command_apply_count = mc->command_apply_count;
     out->command_enable = mc->command.enable;
     out->command_control_mode = mc->command.control_mode;

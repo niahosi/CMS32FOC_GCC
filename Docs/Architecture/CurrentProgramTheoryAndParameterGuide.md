@@ -1,0 +1,1066 @@
+# Current Program Theory And Parameter Guide
+
+本文是当前 `cms32foc` 主固件的程序理解和参数计算手册。
+
+它不是通用 FOC 教科书，而是解释当前 GCC 工程里的这些问题：
+
+```text
+程序从哪里开始跑
+慢环和快环怎么分工
+每个参数的单位是什么
+BoardConfig.h / TuneConfig.h 里的数字怎么来的
+Ozone 里看到的 count / rpm / duty / fault 应该怎么判断
+```
+
+旧 Reference 里的 FOC 数值文档只作为讲解思路参考。本文所有公式和示例数字都按当前 GCC 工程重算。若本文和代码冲突，以当前源码为准，优先看：
+
+```text
+Firmware/Board/Config/BoardConfig.h
+Firmware/Board/Config/TuneConfig.h
+Firmware/MotorControl/C/motor_control_internal.h
+Firmware/MotorControl/Algorithm/foc_math.c
+Firmware/MotorControl/C/motor_control_current.c
+Firmware/MotorControl/C/motor_control_encoder.c
+Firmware/Board/Src/foc_curr.c
+```
+
+## 1. 先看程序总图
+
+当前主固件有两条主线：
+
+```text
+main() 慢链路
+  -> bsp_init()
+  -> MotorControl_Init()
+  -> ScrewAxis_Init()
+  -> bsp_start_adc_sync()
+  -> while (1)
+       -> ScrewAxis_Run()
+       -> MotorControl_ApplyCommand()
+       -> MotorControl_RunSlowLoop()
+       -> MotorControl_UpdateWatch()
+
+ADC_IRQHandler() 快链路
+  -> MotorControl_FastLoopFromAdcIrq()
+       -> bsp_adc_irq()
+       -> Current / Speed / VF fast loop
+  -> ScrewAxis_OnAdcSample()
+```
+
+一句话：
+
+```text
+main.c 负责调度和慢环状态
+Board 层负责真实外设 PWM / ADC / MA600 / UART
+MotorControl 层负责 FOC、状态机、速度环、电流环
+Algorithm 层只做纯数学
+App 层 ScrewAxis 把轴级逻辑转换成 MotorControl 命令
+```
+
+如果你刚开始读程序，先按这个顺序：
+
+```text
+1. Docs/Architecture/CurrentProgramBuildAndReadMap.md
+2. Firmware/Board/Config/BoardConfig.h
+3. Firmware/Board/Config/TuneConfig.h
+4. Firmware/MotorControl/Inc/MotorControl.h
+5. Firmware/MotorControl/C/motor_control_c.c
+6. Firmware/MotorControl/C/motor_control_current.c
+7. Firmware/MotorControl/C/motor_control_encoder.c
+8. Firmware/MotorControl/Algorithm/foc_math.c
+9. Firmware/Board/Src/foc_curr.c
+```
+
+## 2. 参数入口怎么分
+
+当前工程把参数分成两类。
+
+`BoardConfig.h` 放硬件基线：
+
+```text
+PWM 频率和周期
+PWM duty 上下限
+ADC 参考电压、采样电阻、PGA 增益
+电机极对数、传感器 CPR、传感器方向
+MA600 SPI 分频
+UART bring-up 参数
+```
+
+这些值通常和板子、电机、传感器有关，不应该在调速度环时频繁改。
+
+`TuneConfig.h` 放当前调试和控制参数：
+
+```text
+电流采样窗口策略
+电流/编码器安全阈值
+电流环 PI 参数
+速度估算和速度环参数
+VF/IF 开环默认值
+```
+
+这些值是 bring-up 和调参时最常看的入口。
+
+## 3. 当前单位总表
+
+程序里大部分量不是物理 SI 单位，而是适合 Cortex-M0+ 定点计算的 count。
+
+| 名称 | 程序单位 | 典型字段 | 含义 |
+| --- | --- | --- | --- |
+| ADC raw | ADC code | `curr_raw_adc_u()` | ADC 原始 12-bit 码值，未扣零漂 |
+| 电流 count | ADC count | `iu_cnt`, `iq_ref` | 扣零漂后的电流采样或电流给定 |
+| 电流 A | A | 文档计算值 | 通过 `ADC_TO_AMP` 从 count 估算 |
+| PWM duty count | timer count | `duty_u` | EPWM 比较值，0..1600 标尺 |
+| 电压 count | SVPWM count | `vd`, `vq`, `vf_voltage` | FOC 输出电压命令，不是直接的伏特 |
+| MA600 raw | 0..65535 | `encoder_raw` | 磁角一圈的 16-bit raw |
+| 电角度 | uint16 周期角 | `encoder_elec`, `voltage_theta` | 0..65535 表示 0..360 电角度 |
+| speed count/s | encoder count/s | `speed_ref`, `speed_fb` | 每秒编码器电角 count |
+| rpm | mechanical rpm | `speed_ref_rpm`, `speed_fb_rpm` | 机械转速观察和命令入口 |
+
+读 Watch 时先问自己：
+
+```text
+这个字段是 ADC count，还是 PWM count？
+这个字段是 raw 角度，还是电角度？
+这个字段是 count/s，还是 rpm？
+```
+
+单位判断错，后面的调参判断都会错。
+
+## 4. PWM 和时间参数
+
+当前配置：
+
+```c
+#define PWM_FREQ_HZ 20000U
+#define PWM_PERIOD 1600U
+#define PWM_DUTY_50 800U
+#define PWM_DUTY_MIN 32U
+#define PWM_DUTY_MAX 1568U
+#define PWM_ADC_TRIGGER_TICK_DEFAULT 650U
+#define PWM_DEADTIME_TICKS 32U
+```
+
+### 4.1 为什么 PWM_PERIOD 是 1600
+
+CMS32 当前按 64 MHz 时钟理解，中心对齐 PWM 上下计数。
+
+完整 PWM 周期包含上数和下数两段：
+
+```text
+PWM_PERIOD = 64 MHz / (2 * PWM_FREQ_HZ)
+           = 64,000,000 / (2 * 20,000)
+           = 1600
+```
+
+所以：
+
+```text
+counter 0      = 周期边界
+counter 800    = 50% duty 中心
+counter 1600   = 半周期顶点
+完整 PWM 周期  = 50 us
+半周期          = 25 us
+```
+
+### 4.2 duty count 表示什么
+
+`PWM_DUTY_50 = 800`，所以 duty 以 1600 为满标尺：
+
+```text
+duty = 800   约等于 50%
+duty = 32    约等于 2%
+duty = 1568  约等于 98%
+1 duty count = 1 / 1600 = 0.0625%
+```
+
+当前 duty guard 很宽，主要给高调制测试留空间。真正能不能可靠采电流，还要看低边导通窗口是否足够。
+
+### 4.3 死区时间
+
+当前：
+
+```text
+PWM_DEADTIME_TICKS = 32
+1 tick = 1 / 64 MHz = 15.625 ns
+deadtime = 32 * 15.625 ns = 500 ns = 0.5 us
+```
+
+死区用于避免上下桥臂直通。死区越大，低占空比处的输出失真和采样窗口损失越明显；死区太小则有直通风险。
+
+### 4.4 SVPWM 电压限幅
+
+当前宏：
+
+```c
+#define PWM_SVPWM_V_LIMIT (((PWM_DUTY_50 - PWM_DUTY_MIN) * 1000U) / 866U)
+```
+
+代入当前值：
+
+```text
+PWM_SVPWM_V_LIMIT = (800 - 32) * 1000 / 866
+                  = 768000 / 866
+                  = 886  // 整数除法截断
+```
+
+这说明 `vd/vq/vf_voltage` 的安全上限大约是 `886` 个 SVPWM 电压 count。它不是伏特，而是 `foc_svpwm()` 输入使用的 PWM 标尺。
+
+## 5. ADC 和电流换算
+
+当前硬件参数：
+
+```c
+#define ADC_VREF_V 3.6f
+#define ADC_COUNTS 4096.0f
+#define SHUNT_OHM 0.08f
+#define PGA_GAIN 2.0f
+#define ADC_TO_AMP (ADC_VREF_V / ADC_COUNTS / SHUNT_OHM / PGA_GAIN)
+```
+
+理论换算：
+
+```text
+1 ADC count 对应采样电压 = 3.6 V / 4096
+                         = 0.00087890625 V
+
+1 current count 对应电流 = 0.00087890625 / 0.08 / 2
+                         = 0.005493164 A
+                         约 5.49 mA
+```
+
+常用值：
+
+| current count | 理论电流 |
+| ---: | ---: |
+| 20 | 0.110 A |
+| 60 | 0.330 A |
+| 80 | 0.439 A |
+| 400 | 2.197 A |
+| 1000 | 5.493 A |
+
+所以当前默认：
+
+```text
+CTRL_SPD_IQ_LIMIT = 80
+80 count 约 0.44 A
+```
+
+如果电机相电阻按 4 ohm 粗略估算，仅电阻压降：
+
+```text
+V = I * R = 0.439 A * 4 ohm = 1.76 V
+```
+
+这个估算只用于判断量级。真实运行还会受反电动势、电感、电流采样误差、PWM 死区和电角度误差影响。
+
+## 6. 电流采样和逻辑电流
+
+当前电流采样在 `foc_curr.c` 中实现，思路是三电阻低边采样，但运行时不一定每拍都采三相。
+
+关键参数：
+
+```c
+#define CS_PAIR_UV 0U
+#define CS_PAIR_UW 1U
+#define CS_PAIR_VW 2U
+#define CS_USE_2PHASE_IN_ALL_WINDOW 1U
+#define CS_ALL_WINDOW_PAIR CS_PAIR_UV
+#define CS_MULTI_EN 1U
+#define CS_MULTI_DELTA_TICK 4U
+#define CS_MULTI_SPREAD_LIMIT_CNT 40
+#define CS_OPEN_SETTLE_TICK (PWM_DEADTIME_TICKS + 4U)
+#define CS_TAIL_MARGIN_TICK 60U
+#define CS_FILTER_SHIFT 3U
+```
+
+### 6.1 为什么只采两相也能跑 FOC
+
+三相星型无中线电机理想满足：
+
+```text
+Iu + Iv + Iw = 0
+```
+
+所以只要拿到任意两相，就可以重构第三相：
+
+```text
+采 U/V: W = -U - V
+采 U/W: V = -U - W
+采 V/W: U = -V - W
+```
+
+当前程序会根据本拍 duty 的 T1/T2/T3 窗口选择合适 pair。`CS_USE_2PHASE_IN_ALL_WINDOW = 1` 表示即使三相都可采，也只采两相，减少单 ADC 顺序扫描带来的时间错位。
+
+### 6.2 双点采样是什么意思
+
+当前：
+
+```text
+CS_MULTI_EN = 1
+CS_MULTI_DELTA_TICK = 4
+CS_MULTI_SPREAD_LIMIT_CNT = 40
+```
+
+含义：
+
+```text
+在同一个低边稳定窗口附近采 A/B 两个点
+两个点相差 4 个 PWM tick
+如果两点电流差超过 40 count，认为本拍可能落在开关噪声或恢复区
+```
+
+这不是为了提高分辨率，而是为了判断采样点是否干净。
+
+### 6.3 采样窗口的两个余量
+
+当前：
+
+```text
+CS_OPEN_SETTLE_TICK = PWM_DEADTIME_TICKS + 4 = 36 tick
+CS_TAIL_MARGIN_TICK = 60 tick
+```
+
+含义：
+
+```text
+CS_OPEN_SETTLE_TICK:
+  下管刚打开后不要立刻采，等死区和恢复过程过去。
+
+CS_TAIL_MARGIN_TICK:
+  不要贴着低边窗口尾部采，避免采到即将切换的边沿噪声。
+```
+
+所以 ADC trigger 的目标不是“固定某个漂亮 tick”，而是每个 PWM 周期根据 duty 动态找低边窗口中相对可靠的位置。
+
+### 6.4 raw current 和 logic current
+
+程序里有两套概念：
+
+```text
+physical/raw current:
+  物理 ADC/PGA 通道扣零漂后的相电流。
+
+logic current:
+  经过相序映射和符号处理后送进 FOC 的 U/V/W。
+```
+
+判断硬件采样问题时看 raw/physical 更直接；判断 FOC 坐标和闭环响应时看 logic current、`id/iq`、`vd/vq` 更有意义。
+
+当前 `MOT_CURR_SIGN = -1`，说明逻辑电流整体做了符号翻转，以匹配当前控制坐标。
+
+## 7. 编码器、电角度和速度
+
+当前编码器参数：
+
+```c
+#define MOT_POLE_PAIRS 4u
+#define MOT_SENSOR_POLE_PAIRS 4u
+#define MOT_SENSOR_CPR 65536ul
+#define MOT_SENSOR_ELEC (MOT_POLE_PAIRS / MOT_SENSOR_POLE_PAIRS)
+#define MOT_SENSOR_DIR (1)
+#define MOT_ELEC_ZERO -13478
+```
+
+当前：
+
+```text
+MOT_SENSOR_ELEC = 4 / 4 = 1
+```
+
+也就是 MA600 raw 角度按 1:1 映射到当前 FOC 电角度，再加零点和方向。
+
+`motor_control_encoder.c` 中的电角度公式等价于：
+
+```text
+encoder_elec = MOT_ELEC_ZERO + elec_zero_trim + raw * MOT_SENSOR_ELEC
+```
+
+由于 `uint16_t` 自动回绕，结果仍然是 0..65535 的全周期电角度。
+
+### 7.1 16-bit 全周期角度
+
+当前角度约定：
+
+```text
+0      = 0 电角度
+16384  = 90 度
+32768  = 180 度
+49152  = 270 度
+65536  = 回到 0 度
+```
+
+`foc_sin_q15()` 和 `foc_cos_q15()` 使用这个角度标尺。三角函数输出是 Q15：
+
+```text
++1.0 约等于 32767
+ 0.0 约等于 0
+-1.0 约等于 -32767
+```
+
+所以 Park / InvPark 里会看到：
+
+```c
+(value * sin_or_cos) >> 15
+```
+
+这就是用 Q15 三角函数把 count 量旋转到另一个坐标系。
+
+### 7.2 速度 count/s 和 rpm 换算
+
+当前：
+
+```c
+#define MC_SPEED_COUNTS_PER_REV ((int32_t)MOT_SENSOR_CPR * (int32_t)MOT_SENSOR_POLE_PAIRS)
+```
+
+代入当前值：
+
+```text
+MC_SPEED_COUNTS_PER_REV = 65536 * 4
+                         = 262144 count/rev
+```
+
+换算公式：
+
+```text
+speed_count_per_s = rpm * 262144 / 60
+rpm               = speed_count_per_s * 60 / 262144
+```
+
+常用值：
+
+| 机械转速 | speed count/s |
+| ---: | ---: |
+| 60 rpm | 262144 |
+| 1000 rpm | 4369066 |
+| 5000 rpm | 21845333 |
+
+注意这里使用整数运算，程序会截断小数。
+
+### 7.3 速度估算怎么来
+
+`motor_control_encoder.c` 中速度估算的核心是：
+
+```text
+delta = raw - prev_raw    // int16_t，自动处理 16-bit 回绕
+speed_sample = delta * CTRL_SPD_EST_HZ * MOT_SENSOR_DIR
+speed_fb_diff += (speed_sample - speed_fb_diff) >> CTRL_SPD_FILTER_SHIFT
+speed_fb = speed_fb_diff
+```
+
+当前：
+
+```text
+CTRL_SPD_EST_HZ = 1000
+CTRL_SPD_FILTER_SHIFT = 2
+```
+
+所以速度估算每 1 ms 更新一次，滤波是简单一阶低通：
+
+```text
+new = old + (sample - old) / 4
+```
+
+`CTRL_SPD_POS_DEADBAND = 16` 表示每个 1 ms 速度样本中，如果 raw 增量小于 16 count，就认为接近静止。`CTRL_SPD_ZERO_SNAP = 500` 表示速度 count/s 很小时吸附到 0，减少零速附近抖动。
+
+## 8. 控制频率
+
+当前频率链路：
+
+```text
+PWM/ADC 同步频率 = PWM_FREQ_HZ = 20 kHz
+CTRL_FAST_LOOP_DIV = 1
+MC_CURRENT_HZ = PWM_FREQ_HZ / CTRL_FAST_LOOP_DIV = 20 kHz
+CTRL_SPD_EST_HZ = 1000 Hz
+MC_SPEED_SAMPLE_DIV = MC_CURRENT_HZ / CTRL_SPD_EST_HZ = 20
+```
+
+含义：
+
+```text
+ADC 每 50 us 进一次同步采样
+电流环每 50 us 可执行一次，约 20 kHz
+速度估算和速度 PI 每 20 个电流环 tick 执行一次，约 1 kHz
+```
+
+如果你在 watch 里看到：
+
+```text
+fast_loop_count 增长很快
+speed_loop_count 增长约为 fast_loop_count / 20
+```
+
+这是符合当前配置的。
+
+## 9. FOC 数学链路
+
+FOC 快环主线在 `MotorControl_CurrentRunFastLoop()` 中。
+
+Speed 模式下链路是：
+
+```text
+curr_u/v/w()
+  -> MotorControl_InternalCurrentOk()
+  -> MotorControl_InternalUpdateEncoderAngle()
+  -> 每 20 拍 MotorControl_InternalUpdateEncoderSpeed()
+  -> 每 20 拍 update_speed_loop()
+  -> slew id/iq ref
+  -> foc_clarke_3phase()
+  -> foc_park()
+  -> current PI d/q
+  -> MotorControl_InternalApplyVoltageVector()
+       -> foc_limit_dq()
+       -> foc_inv_park()
+       -> foc_svpwm()
+       -> pwm_set_duty()
+       -> pwm_enable()
+```
+
+Current 模式少一层速度 PI：
+
+```text
+iq_ref = command.iq_ref
+```
+
+Speed 模式：
+
+```text
+iq_ref = speed_iq_ref
+```
+
+### 9.1 Clarke
+
+当前 `foc_clarke_3phase()` 先去掉三相公共偏置：
+
+```text
+mid = (iu + iv + iw) / 3
+u' = iu - mid
+v' = iv - mid
+w' = iw - mid
+```
+
+再用 U/V 两相做 Clarke：
+
+```text
+alpha = iu
+beta  = (iu * 9459 + iv * 18919) >> 14
+```
+
+这里：
+
+```text
+9459 / 16384 约等于 1 / sqrt(3)
+18919 / 16384 约等于 2 / sqrt(3)
+```
+
+所以它对应常见公式：
+
+```text
+alpha = Iu
+beta  = (Iu + 2Iv) / sqrt(3)
+```
+
+### 9.2 Park
+
+`foc_park()` 把 alpha/beta 电流旋转到 d/q：
+
+```text
+d =  alpha * cos(theta) + beta * sin(theta)
+q = -alpha * sin(theta) + beta * cos(theta)
+```
+
+程序里三角函数是 Q15，所以实现是：
+
+```text
+d = (...) >> 15
+q = (...) >> 15
+```
+
+调试时：
+
+```text
+id 是磁链方向电流
+iq 是转矩方向电流
+```
+
+如果给小正 `iq_ref`，`iq` 方向总是反的，优先怀疑：
+
+```text
+MOT_SENSOR_DIR
+MOT_ELEC_ZERO
+MOT_PWM_PHASE_MAP
+MOT_CURR_PHASE_MAP
+MOT_CURR_SIGN
+```
+
+### 9.3 电流 PI
+
+当前电流环参数：
+
+```c
+#define CTRL_CUR_KP 4
+#define CTRL_CUR_KI 1
+#define CTRL_CUR_PI_SHIFT 3u
+```
+
+PI 输出大致是：
+
+```text
+output = (kp * error + ki * integral) >> shift
+```
+
+所以比例项量级：
+
+```text
+KP / 2^shift = 4 / 8 = 0.5
+```
+
+也就是电流误差 100 count 时，比例项约给 50 个电压 count。积分项每拍累积误差，再乘 `KI / 8`，用于消除静态误差。
+
+当前输出限幅来自 `CTRL_CUR_V_LIMIT`，也就是约 `886` 个 SVPWM 电压 count。
+
+### 9.4 dq 电压限幅
+
+`foc_limit_dq()` 不是精确开平方，而是用近似幅值：
+
+```text
+mag = max(abs(d), abs(q)) + min(abs(d), abs(q)) / 2
+```
+
+如果 `mag` 超过限幅，就按比例缩小 `d/q`。这样避免在 M0+ 上做昂贵的 sqrt，同时能防止明显过调制。
+
+### 9.5 InvPark 和 SVPWM
+
+`foc_inv_park()` 把 d/q 电压反旋转回 alpha/beta：
+
+```text
+alpha = d * cos(theta) - q * sin(theta)
+beta  = d * sin(theta) + q * cos(theta)
+```
+
+然后 `foc_svpwm()` 做零序注入：
+
+```text
+vu = alpha
+vv = -alpha / 2 + beta * 0.866
+vw = -alpha / 2 - beta * 0.866
+vzero = -(max(vu, vv, vw) + min(vu, vv, vw)) / 2
+duty = center + phase_voltage + vzero
+```
+
+最后 duty 被夹到：
+
+```text
+PWM_DUTY_MIN .. PWM_DUTY_MAX
+32 .. 1568
+```
+
+所以 watch 里：
+
+```text
+duty_u/v/w 接近 800：
+  输出电压很小或停机附近。
+
+duty_u/v/w 接近 32 或 1568：
+  已接近 duty guard，可能是电压命令太大、相位错误或环路饱和。
+```
+
+## 10. 速度环参数
+
+当前速度环参数：
+
+```c
+#define CTRL_SPD_KP 32
+#define CTRL_SPD_KI 3
+#define CTRL_SPD_ERR_SHIFT 10u
+#define CTRL_SPD_CMD_DEADBAND_RPM 5
+#define CTRL_SPD_REF_RAMP_RPM_PER_S 2000L
+#define CTRL_SPD_REF_LIMIT_RPM 5000L
+#define CTRL_SPD_IQ_LIMIT 80
+#define CTRL_SPD_IQ_SLEW_STEP 4
+```
+
+速度 PI 输入是 rpm 误差，输出是 q 轴电流 count。
+
+比例项量级：
+
+```text
+CTRL_SPD_KP / 2^CTRL_SPD_ERR_SHIFT = 32 / 1024 = 0.03125 iq_count/rpm
+```
+
+例子：
+
+```text
+速度误差 100 rpm
+比例项约 100 * 0.03125 = 3.125 iq count
+```
+
+积分项量级：
+
+```text
+CTRL_SPD_KI / 1024 = 3 / 1024 = 0.00293 iq_count/rpm/sample
+```
+
+因为速度 PI 每 1 ms 执行一次，所以积分项的 sample 是 1 kHz 速度周期。
+
+### 10.1 速度目标斜坡
+
+当前速度目标斜坡：
+
+```text
+CTRL_SPD_REF_RAMP_RPM_PER_S = 2000 rpm/s
+CTRL_SPD_EST_HZ = 1000 Hz
+```
+
+每个速度环周期允许目标变化：
+
+```text
+2000 rpm/s / 1000 sample/s = 2 rpm/sample
+```
+
+换成 speed count/s 的 ramp step：
+
+```text
+step = 2000 * 262144 / (60 * 1000)
+     = 8738 count/s per speed update
+```
+
+这说明速度目标不是瞬间跳到命令值，而是每 1 ms 最多增加约 2 rpm。
+
+### 10.2 零速死区
+
+当前：
+
+```text
+CTRL_SPD_CMD_DEADBAND_RPM = 5
+```
+
+如果原始目标速度在 -5..+5 rpm 内，速度环会：
+
+```text
+reset speed PI
+speed_iq_ref = 0
+speed_ref_active = 0
+speed_deadband_count++
+```
+
+这样做是为了避免零速附近积分保持导致电机轻微抖动。
+
+## 11. VF 开环参数
+
+当前 VF/IF 默认参数：
+
+```c
+#define OL_SPEED_REF 50l
+#define OL_VF_VOLTAGE 80
+#define OL_IF_IQ_REF 200
+#define OL_IF_ID_REF 0
+#define OL_TIMEOUT_MS 30000u
+#define OL_SPEED_TO_THETA_STEP 131l
+#define OL_SPEED_TO_THETA_SHIFT 8u
+```
+
+VF 模式不依赖编码器角度闭环，它用内部开环角积分输出 q 轴电压：
+
+```text
+open_loop_theta += open_loop_speed_ref * OL_SPEED_TO_THETA_STEP >> OL_SPEED_TO_THETA_SHIFT
+```
+
+VF 适合应急开环验证：
+
+```text
+PWM 是否能输出
+SVPWM duty 是否变化
+电流采样是否有响应
+编码器观察速度是否跟着变化
+```
+
+它不适合长期带载控制。VF 能转不代表闭环角度、相序、电流方向都正确。
+
+## 12. Watch 和调试读数索引
+
+公共入口在 `MotorControl.h`：
+
+```text
+g_motor_cmd
+g_motor_watch
+```
+
+`g_motor_cmd` 是命令入口，主循环复制并限幅后写入内部 `s_mc.command`。`g_motor_watch` 是观察快照，主循环调用 `MotorControl_UpdateWatch()` 更新。
+
+### 12.1 先看状态
+
+优先看：
+
+```text
+state
+control_mode
+fault_reason
+enable
+slow_loop_count
+fast_loop_count
+speed_loop_count
+safe_state_count
+```
+
+判断：
+
+```text
+slow_loop_count 不动：
+  main loop 没跑或卡住。
+
+fast_loop_count 不动：
+  ADC/PWM sync 没进快环，先查 bsp_start_adc_sync()、ADC IRQ、PWM trigger。
+
+state = fault：
+  看 fault_reason。
+
+safe_state_count 持续增加：
+  控制反复进入安全态，先查 current_ok / encoder_ok / unsupported mode。
+```
+
+### 12.2 再看命令是否合理
+
+看：
+
+```text
+speed_ref
+speed_ref_rpm
+iq_limit
+id_ref
+iq_ref
+current_kp/current_ki
+speed_kp/speed_ki
+current_v_limit
+vf_voltage
+```
+
+判断：
+
+```text
+speed_ref_rpm 非 0 时会覆盖 speed_ref。
+iq_limit 太小会让速度环没有足够转矩。
+current_v_limit 太小会让电流 PI 很快饱和。
+PI 参数为 0 时对应环路可能没有调节能力。
+```
+
+### 12.3 看电流采样和 FOC
+
+看：
+
+```text
+iu_cnt
+iv_cnt
+iw_cnt
+i_sum
+id
+iq
+id_ref
+iq_ref
+vd
+vq
+v_limited
+duty_u
+duty_v
+duty_w
+pwm_safe
+pwm_running
+```
+
+判断：
+
+```text
+i_sum 很大：
+  可能采样、零漂、相序映射或重构异常。
+
+给 iq_ref 后 iq 方向反：
+  优先查传感器方向、零点、PWM 相序、电流相序、电流符号。
+
+v_limited = 1：
+  电压命令已经被 dq 限幅压住，继续加 PI 不一定有用。
+
+duty 长期贴 32/1568：
+  输出接近边界，可能相位错误、负载太大、电压限幅不足或采样异常。
+```
+
+### 12.4 看编码器和速度
+
+看：
+
+```text
+encoder_raw
+encoder_elec
+encoder_delta
+encoder_pos
+encoder_age
+encoder_ok
+encoder_reject_count
+encoder_retry_count
+encoder_hold_count
+speed_fb
+speed_fb_rpm
+speed_reject_count
+speed_reject_delta
+```
+
+判断：
+
+```text
+encoder_reject_count 增长：
+  raw 单拍跳变超过 MOT_ENCODER_MAX_STEP_RAW，可能 SPI 毛刺、磁环问题或线束干扰。
+
+encoder_hold_count 增长：
+  读角失败或坏角后保持上一角度。
+
+speed_reject_count 增长：
+  1 kHz 速度采样窗口内 raw 差分异常。
+
+speed_fb_rpm 符号和实际相反：
+  优先查 MOT_SENSOR_DIR。
+```
+
+## 13. 出问题时先怀疑哪里
+
+### 13.1 电机不动
+
+按顺序看：
+
+```text
+enable / control_mode
+state / fault_reason
+pwm_running / pwm_safe
+iq_ref 或 speed_iq_cmd 是否非 0
+vd/vq 是否非 0
+duty_u/v/w 是否离 800 有变化
+```
+
+如果 `vq` 有输出但 duty 不变，查 PWM 输出链路。  
+如果 duty 有变化但电流无响应，查功率级、驱动使能、采样、接线。  
+如果电流有响应但方向不对，查相序、零点、方向。
+
+### 13.2 一使能就 fault
+
+按顺序看：
+
+```text
+fault_reason
+check.current_ok
+check.ma600_ok
+check.ready_closed_loop
+encoder_ok / encoder_age
+iu_cnt / iv_cnt / iw_cnt
+```
+
+`MC_FAULT_CURRENT` 优先看电流采样范围和 KCL。  
+`MC_FAULT_ENCODER` 优先看 MA600 读取、raw 跳变、angle age。  
+`MC_FAULT_UNSUPPORTED_MODE` 优先看 `control_mode` 是否写了 4/5 或其它未支持值。
+
+### 13.3 速度环抖动
+
+先不要急着加大 PI。按顺序看：
+
+```text
+speed_ref_rpm
+speed_ref_active_rpm
+speed_fb_rpm
+speed_err_rpm
+speed_iq_target
+speed_iq_cmd
+speed_pi_integral
+encoder_reject_count
+speed_reject_count
+id/iq
+vd/vq
+v_limited
+```
+
+判断：
+
+```text
+speed_fb_rpm 本身跳：
+  先查编码器和速度估算。
+
+speed_iq_cmd 打到 iq_limit：
+  速度环已经尽力，可能 iq_limit 太小、负载太大或电流环没跟上。
+
+v_limited 经常为 1：
+  电流环输出电压不够，继续加速度 PI 可能只会更饱和。
+
+id/iq 方向不对：
+  先查坐标自洽，不要盲目调 PI。
+```
+
+## 14. 当前值快速索引
+
+| 项目 | 当前值 | 来源 |
+| --- | ---: | --- |
+| PWM 频率 | 20 kHz | `PWM_FREQ_HZ` |
+| PWM period | 1600 | `PWM_PERIOD` |
+| 50% duty | 800 | `PWM_DUTY_50` |
+| duty 范围 | 32..1568 | `PWM_DUTY_MIN/MAX` |
+| 死区 | 32 tick = 0.5 us | `PWM_DEADTIME_TICKS` |
+| 默认 ADC trigger | 650 | `PWM_ADC_TRIGGER_TICK_DEFAULT` |
+| SVPWM 电压限幅 | 886 count | `PWM_SVPWM_V_LIMIT` |
+| ADC 到电流 | 5.49 mA/count | `ADC_TO_AMP` |
+| 电流环频率 | 20 kHz | `CTRL_FAST_LOOP_DIV=1` |
+| 速度估算频率 | 1 kHz | `CTRL_SPD_EST_HZ` |
+| 速度采样分频 | 20 | `MC_SPEED_SAMPLE_DIV` |
+| 编码器 counts/rev | 262144 | `MC_SPEED_COUNTS_PER_REV` |
+| 速度限幅 | 5000 rpm | `CTRL_SPD_REF_LIMIT_RPM` |
+| 速度限幅 count/s | 21845333 | `CTRL_SPD_REF_LIMIT` |
+| 默认速度 iq 限幅 | 80 count = 0.44 A | `CTRL_SPD_IQ_LIMIT` |
+| 电流 PI | KP=4, KI=1, shift=3 | `CTRL_CUR_*` |
+| 速度 PI | KP=32, KI=3, shift=10 | `CTRL_SPD_*` |
+| 速度目标斜坡 | 2000 rpm/s | `CTRL_SPD_REF_RAMP_RPM_PER_S` |
+| 速度 iq 斜坡 | 4 count/sample | `CTRL_SPD_IQ_SLEW_STEP` |
+| VF 默认电压 | 80 count | `OL_VF_VOLTAGE` |
+| VF 超时 | 30000 ms | `OL_TIMEOUT_MS` |
+
+## 15. 阅读路线
+
+如果你想全面理解当前程序，建议按这个顺序读：
+
+```text
+1. Docs/Architecture/CurrentProgramBuildAndReadMap.md
+   先知道程序结构、CMake target 和调用链。
+
+2. Firmware/Board/Config/BoardConfig.h
+   看硬件标尺：PWM、ADC、电机、传感器、UART。
+
+3. Firmware/Board/Config/TuneConfig.h
+   看调参入口：采样窗口、电流环、速度环、VF。
+
+4. Firmware/MotorControl/Inc/MotorControl.h
+   看命令和 watch 字段，知道 Ozone 里每个数的含义。
+
+5. Firmware/MotorControl/C/motor_control_c.c
+   看主状态机、命令复制、慢环 ready/fault 判断、快环分发。
+
+6. Firmware/MotorControl/C/motor_control_current.c
+   看 Current/Speed 快环、电流 PI、速度 PI 如何接到 iq。
+
+7. Firmware/MotorControl/C/motor_control_encoder.c
+   看 MA600 raw 如何变成电角度、速度和位置。
+
+8. Firmware/MotorControl/Algorithm/foc_math.c
+   看 Clarke/Park/PI/InvPark/SVPWM 的定点实现。
+
+9. Firmware/Board/Src/foc_curr.c
+   最后看采样窗口、双点采样、pair 选择和重构。
+```
+
+读的时候不要孤立看某个参数。最好按这条链串起来：
+
+```text
+命令 rpm / iq
+  -> 内部 count
+  -> 电流/速度 PI
+  -> vd/vq 电压 count
+  -> SVPWM duty
+  -> PWM/ADC 同步采样
+  -> current count
+  -> id/iq
+  -> watch 观察
+```
+
+只要这条链能解释得通，调参就不会变成猜数。

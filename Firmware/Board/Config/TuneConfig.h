@@ -26,7 +26,7 @@
 /** @brief 双点采样两点差值超过该值时，认为本拍落在开关噪声或恢复区。 */
 #define CS_MULTI_SPREAD_LIMIT_CNT 40
 /** @brief 下降计数经过 duty 后，下管刚打开到 ADC 主采样点的延迟。 */
-#define CS_OPEN_SETTLE_TICK (PWM_DEADTIME_TICKS + 4U)//(PWM_DEADTIME_TICKS + 80U)
+#define CS_OPEN_SETTLE_TICK (PWM_DEADTIME_TICKS + 4U) //(PWM_DEADTIME_TICKS + 80U)
 /** @brief 采样点离低边窗口末端的最小安全余量。 */
 #define CS_TAIL_MARGIN_TICK 60U
 /** @brief Case3 无效相使用的软件低通滤波右移。 */
@@ -70,14 +70,6 @@
 #define MOT_ENCODER_SIDE_ETX 0U
 /** @brief MA600 是否削弱 Y 轴；ETX/ETY 不要同时为 1。 */
 #define MOT_ENCODER_SIDE_ETY 1U
-/** @brief MA600 MTSP 寄存器是否配置为 speed 输出；0 为普通角度/多圈模式。 */
-#define MOT_ENCODER_MTSP_SPEED_EN 0U
-/** @brief 快环 MA600 读取是否使用 32-bit angle+speed 帧；先默认 16-bit angle 帧做 A/B 验证。 */
-#define MOT_ENCODER_FAST_READ_SPEED_FRAME 0U
-
-#if (MOT_ENCODER_FAST_READ_SPEED_FRAME != 0U) && (MOT_ENCODER_MTSP_SPEED_EN == 0U)
-#error "32-bit MA600 speed frame requires MOT_ENCODER_MTSP_SPEED_EN"
-#endif
 
 #if (MOT_ENCODER_SIDE_BCT > 255U)
 #error "MOT_ENCODER_SIDE_BCT must be 0..255"
@@ -141,18 +133,7 @@
 #define CTRL_SPD_EST_HZ 1000L
 /** @brief 模式切入后跳过的速度估算窗口数，避免初始 raw/prev raw 不连续导致速度尖峰。 */
 #define CTRL_SPD_STARTUP_BLANK_SAMPLES 4U
-#define CTRL_SPD_FB_SOURCE_DIFF 0U
-#define CTRL_SPD_FB_SOURCE_MA600 1U
-/** @brief 速度环反馈源：MA600 speed 当前低速尖峰偏大，默认先用角度差分。 */
-#define CTRL_SPD_FB_SOURCE CTRL_SPD_FB_SOURCE_DIFF
-/** @brief MA600 speed 方向修正；若与差分速度反号，改为 -1。 */
-#define CTRL_SPD_MA600_SIGN (1)
-/** @brief MA600 speed 输出换算到传感器 raw counts/s 的近似比例，5.722rpm/LSB。 */
-#define CTRL_SPD_MA600_COUNTS_PER_SEC_PER_LSB 6251L
-/** @brief MA600 speed 单次允许跳变，单位 rpm；超过则认为是低速尖峰。 */
-#define CTRL_SPD_MA600_SPIKE_RPM 300
-/** @brief MA600 speed 原始低通滤波右移，值越大越平滑。 */
-#define CTRL_SPD_MA600_FILTER_SHIFT 4u
+
 /**
  * @brief 角度差分测速的单次跳变拒绝阈值，单位机械 rpm。
  *
@@ -180,7 +161,7 @@
 /** @brief 速度给定限幅，机械 rpm；Ozone speed_ref_rpm 会先换算再按该值限幅。 */
 #define CTRL_SPD_REF_LIMIT_RPM 5000L
 /** @brief 速度给定限幅，编码器电角 count/s。 */
-#define CTRL_SPD_REF_LIMIT \
+#define CTRL_SPD_REF_LIMIT                                                                         \
     ((CTRL_SPD_REF_LIMIT_RPM * (long)MOT_SENSOR_CPR * (long)MOT_SENSOR_POLE_PAIRS) / 60L)
 /** @brief 速度环默认 iq 限幅；80 count 约 0.44 A，4 ohm 电机上压降约 1.76 V。 */
 #define CTRL_SPD_IQ_LIMIT 80

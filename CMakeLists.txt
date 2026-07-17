@@ -28,6 +28,7 @@ set(CMS32_BOARD_SRC_DIR ${CMS32_BOARD_DIR}/Src)
 set(CMS32_MOTOR_DIR ${CMS32_FIRMWARE_DIR}/MotorControl)
 set(CMS32_MOTOR_ALGORITHM_DIR ${CMS32_MOTOR_DIR}/Algorithm)
 set(CMS32_MOTOR_C_DIR ${CMS32_MOTOR_DIR}/C)
+set(CMS32_MOTOR_CPP_DIR ${CMS32_MOTOR_DIR}/Cpp)
 set(CMS32_MOTOR_INC_DIR ${CMS32_MOTOR_DIR}/Inc)
 set(CMS32_SUPPORT_DIR ${CMS32_FIRMWARE_DIR}/Support)
 
@@ -150,6 +151,7 @@ set(CMS32_VENDOR_DRIVER_SOURCES
     ${CMS32_VENDOR_DIR}/Driver/src/gpio.c
     ${CMS32_VENDOR_DIR}/Driver/src/pga.c
     ${CMS32_VENDOR_DIR}/Driver/src/ssp.c
+    ${CMS32_VENDOR_DIR}/Driver/src/uart.c
 )
 
 add_library(cms32_vendor_drivers STATIC
@@ -180,6 +182,7 @@ set(CMS32_BOARD_SOURCES
     ${CMS32_BOARD_SRC_DIR}/foc_curr.c
     ${CMS32_BOARD_SRC_DIR}/foc_ma600.c
     ${CMS32_BOARD_SRC_DIR}/foc_pwm.c
+    ${CMS32_BOARD_SRC_DIR}/board_uart.c
 )
 
 add_library(cms32_bsp STATIC

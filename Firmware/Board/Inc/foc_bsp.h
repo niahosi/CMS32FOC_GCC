@@ -7,6 +7,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief 初始化板级硬件。
  *
@@ -43,11 +47,12 @@ uint8_t bsp_update_angle_fast(void);
 /** @brief 获取最近一次缓存的 MA600 原始角度。 */
 uint16_t bsp_angle_raw(void);
 
-/** @brief 获取最近一次缓存的 MA600 speed 原始 signed 16-bit 输出。 */
-int16_t bsp_angle_speed_raw(void);
-
 /** @brief 判断最近一次 MA600 缓存更新是否成功。 */
 uint8_t bsp_angle_ok(void);
 
 /** @brief 获取 MA600 缓存年龄。 */
 uint8_t bsp_angle_age(void);
+
+#ifdef __cplusplus
+}
+#endif

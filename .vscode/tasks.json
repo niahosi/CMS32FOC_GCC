@@ -78,7 +78,23 @@
     {
       "label": "Flash",
       "type": "shell",
-      "command": "target='${input:firmwareTarget}'; hex=\"\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\jove\\\\workspace\\\\01-Projects\\\\Embedded\\\\CMS32FOC_GCC\\\\build\\\\gcc-debug\\\\${target}.hex\"; printf 'device CMS32M6510\\nif SWD\\nspeed 4000\\nconnect\\nr\\nerase\\nloadfile %s\\nr\\ng\\nqc\\n' \"$hex\" | '/mnt/c/Program Files/SEGGER/JLink_V952/JLink.exe'",
+      "command": "target='${input:firmwareTarget}'; hex=\"\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\jove\\\\workspace\\\\01-Projects\\\\Embedded\\\\CMS32FOC_GCC\\\\build\\\\gcc-debug\\\\${target}.hex\"; printf 'device CMS32M6510\\nif SWD\\nspeed 10000\\nconnect\\nr\\nerase\\nloadfile %s\\nr\\ng\\nqc\\n' \"$hex\" | '/mnt/c/Program Files/SEGGER/JLink_V952/JLink.exe'",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CLICOLOR_FORCE": "1",
+          "GCC_COLORS": "error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01"
+        }
+      },
+      "dependsOn": [
+        "Build"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Flash Rescue",
+      "type": "shell",
+      "command": "target='${input:firmwareTarget}'; hex=\"\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\jove\\\\workspace\\\\01-Projects\\\\Embedded\\\\CMS32FOC_GCC\\\\build\\\\gcc-debug\\\\${target}.hex\"; printf 'device CMS32M6510\\nif SWD\\nspeed 1000\\nconnect\\nhalt\\nloadfile %s\\nqc\\n' \"$hex\" | '/mnt/c/Program Files/SEGGER/JLink_V952/JLink.exe'",
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {

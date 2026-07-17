@@ -6,6 +6,10 @@
 #include "MotorControl.h"
 #include "foc_math.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** @brief 控制层内部状态：空闲。 */
 #define MC_STATE_IDLE 0U
 /** @brief 控制层内部状态：闭环/诊断模式快环可运行。 */
@@ -43,6 +47,36 @@
 #define MC_SPEED_SAMPLE_DIV (MC_CURRENT_HZ / CTRL_SPD_EST_HZ)
 /** @brief 每机械圈对应的电角 encoder count 数。 */
 #define MC_SPEED_COUNTS_PER_REV ((int32_t)MOT_SENSOR_CPR * (int32_t)MOT_SENSOR_POLE_PAIRS)
+
+/** @brief 电流快环直接使用的命令子集。 */
+typedef struct
+{
+    int16_t id_ref;
+    int16_t iq_ref;
+    int16_t iq_limit;
+    int16_t current_kp;
+    int16_t current_ki;
+    int16_t current_v_limit;
+    int16_t elec_zero_trim;
+    int16_t voltage_theta_offset;
+} MCCurrentCommand_t;
+
+/** @brief 速度估算/速度 PI 使用的命令子集。 */
+typedef struct
+{
+    int32_t speed_ref;
+    int16_t speed_kp;
+    int16_t speed_ki;
+    int16_t iq_limit;
+} MCSpeedCommand_t;
+
+/** @brief VF 应急开环使用的命令子集。 */
+typedef struct
+{
+    int32_t open_loop_speed_ref;
+    int16_t vf_voltage;
+    uint16_t open_loop_timeout_ms;
+} MCVfCommand_t;
 
 /**
  * @brief C 控制层和 VF 应急开环模块共享的内部状态。
@@ -118,10 +152,6 @@ typedef struct
     int32_t speed_ref_active;
     /** @brief raw 差分速度反馈，编码器电角 count/s。 */
     int32_t speed_fb_diff;
-    /** @brief MA600 speed frame 速度反馈，编码器电角 count/s。 */
-    int32_t speed_fb_ma600;
-    /** @brief MA600 speed 原始 signed 16-bit 输出。 */
-    int16_t ma600_speed_raw;
     /** @brief 速度环 rpm 误差。 */
     int16_t speed_err_rpm;
     /** @brief 速度环斜率限制前的 q 轴电流目标。 */
@@ -144,8 +174,12 @@ typedef struct
     FocPi_t current_pi_d;
     /** @brief q 轴电流 PI。 */
     FocPi_t current_pi_q;
-    /** @brief 已复制和限幅后的命令缓存。 */
-    MotorControlCommand_t command;
+    /** @brief 电流快环直接读取的命令缓存。 */
+    MCCurrentCommand_t current_command;
+    /** @brief 速度估算/速度 PI 直接读取的命令缓存。 */
+    MCSpeedCommand_t speed_command;
+    /** @brief VF 应急开环直接读取的命令缓存。 */
+    MCVfCommand_t vf_command;
     /** @brief 最新三相电流。 */
     FocPhaseCurrent_t current;
     /** @brief Park 后 dq 电流。 */
@@ -169,30 +203,36 @@ typedef struct
 } MotorControlCState;
 
 /** @brief 检查内部状态中的三相电流是否处于安全范围。 */
-uint8_t MotorControl_InternalCurrentOk(MotorControlCState* mc);
+uint8_t MotorControl_InternalCurrentOk(MotorControlCState *mc);
 /** @brief 清空编码器、速度反馈和坏角诊断状态。 */
-void MotorControl_EncoderReset(MotorControlCState* mc);
+void MotorControl_EncoderReset(MotorControlCState *mc);
 /** @brief 快环读取/校验/接受一次编码器角度，带坏角即时重读。 */
-uint8_t MotorControl_InternalUpdateEncoderAngle(MotorControlCState* mc);
+uint8_t MotorControl_InternalUpdateEncoderAngle(MotorControlCState *mc);
 /** @brief 按当前编码器 raw 更新速度反馈。 */
-uint8_t MotorControl_InternalUpdateEncoderSpeed(MotorControlCState* mc);
+uint8_t MotorControl_InternalUpdateEncoderSpeed(MotorControlCState *mc);
 /** @brief 清空电流 PI 和当前电流给定斜坡状态。 */
-void MotorControl_CurrentReset(MotorControlCState* mc);
+void MotorControl_CurrentReset(MotorControlCState *mc);
 /** @brief 清空速度 PI、速度估算和编码器状态。 */
-void MotorControl_SpeedReset(MotorControlCState* mc);
+void MotorControl_SpeedReset(MotorControlCState *mc);
 /** @brief 运行 Current/Speed 主线快环；Current 也更新速度观察，Speed 额外运行速度 PI。 */
-void MotorControl_CurrentRunFastLoop(MotorControlCState* mc, uint8_t speed_mode);
+void MotorControl_CurrentRunFastLoop(MotorControlCState *mc, uint8_t speed_mode);
 /** @brief 获取当前电流环/诊断电压限幅，命令未设置时回退默认值。 */
-int16_t MotorControl_InternalVoltageLimit(const MotorControlCState* mc);
+int16_t MotorControl_InternalVoltageLimit(const MotorControlCState *mc);
 /** @brief 输出 dq 电压矢量，统一执行限幅、反 Park、SVPWM 和 PWM 使能。 */
-void MotorControl_InternalApplyVoltageVector(MotorControlCState* mc, int16_t vd, int16_t vq,
+void MotorControl_InternalApplyVoltageVector(MotorControlCState *mc,
+                                             int16_t vd,
+                                             int16_t vq,
                                              uint16_t theta);
 /** @brief 进入安全态，关闭 PWM 并清零输出相关状态。 */
-void MotorControl_InternalEnterSafeState(MotorControlCState* mc);
+void MotorControl_InternalEnterSafeState(MotorControlCState *mc);
 /** @brief 将编码器电角 count/s 转为 rpm 观察单位。 */
 int16_t MotorControl_InternalSpeedCountsToRpm(int32_t speed);
 /** @brief 填充 Current/Speed/VF 主线 watch 快照。 */
-void MotorControl_WatchFill(const MotorControlCState* mc, MotorControlWatch_t* out);
+void MotorControl_WatchFill(const MotorControlCState *mc, MotorControlWatch_t *out);
 /** @brief 将主线 watch 快照逐字段写入 volatile 目标。 */
-void MotorControl_WatchCopyToVolatile(volatile MotorControlWatch_t* dst,
-                                      const MotorControlWatch_t* src);
+void MotorControl_WatchCopyToVolatile(volatile MotorControlWatch_t *dst,
+                                      const MotorControlWatch_t *src);
+
+#ifdef __cplusplus
+}
+#endif

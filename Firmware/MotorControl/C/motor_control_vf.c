@@ -1,6 +1,11 @@
 #include "motor_control_vf.h"
 
+#include "BoardConfig.h"
+#include "MotorControl.h"
+#include "TuneConfig.h"
 #include "foc_curr.h"
+#include "motor_control_internal.h"
+#include <stdint.h>
 
 /** @brief VF 应急开环私有状态，独立于 Current/Speed 主线。 */
 typedef struct
@@ -15,7 +20,7 @@ typedef struct
 static MotorControlVfState s_vf;
 
 static void reset_open_loop_theta(void);
-static uint16_t update_open_loop_theta(const MotorControlCommand_t* command);
+static uint16_t update_open_loop_theta(const MCVfCommand_t* command);
 
 /** @brief 初始化 VF 开环状态。 */
 void MotorControlVf_Init(void)
@@ -52,7 +57,7 @@ void MotorControlVf_RunFastLoop(MotorControlCState* mc)
         return;
     }
 
-    s_vf.open_loop_timeout_ticks = (uint32_t)mc->command.open_loop_timeout_ms * 2U;
+    s_vf.open_loop_timeout_ticks = (uint32_t)mc->vf_command.open_loop_timeout_ms * 2U;
     if ((s_vf.open_loop_timeout_ticks > 0U) &&
         (s_vf.open_loop_ticks >= s_vf.open_loop_timeout_ticks))
     {
@@ -62,8 +67,8 @@ void MotorControlVf_RunFastLoop(MotorControlCState* mc)
         return;
     }
 
-    theta = update_open_loop_theta(&mc->command);
-    MotorControl_InternalApplyVoltageVector(mc, 0, mc->command.vf_voltage, theta);
+    theta = update_open_loop_theta(&mc->vf_command);
+    MotorControl_InternalApplyVoltageVector(mc, 0, mc->vf_command.vf_voltage, theta);
     if (++mc->speed_sample_div >= MC_SPEED_SAMPLE_DIV)
     {
         mc->speed_sample_div = 0U;
@@ -103,7 +108,7 @@ static void reset_open_loop_theta(void)
 }
 
 /** @brief 按命令 open_loop_speed_ref 推进 VF 开环角。 */
-static uint16_t update_open_loop_theta(const MotorControlCommand_t* command)
+static uint16_t update_open_loop_theta(const MCVfCommand_t* command)
 {
     int32_t step = (command->open_loop_speed_ref * (int32_t)OL_SPEED_TO_THETA_STEP +
                     (1L << (OL_SPEED_TO_THETA_SHIFT - 1U))) >>

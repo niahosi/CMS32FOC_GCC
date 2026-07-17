@@ -1,5 +1,8 @@
+#include "BoardConfig.h"
 #include "MotorControl.h"
 
+#include "TuneConfig.h"
+#include "foc_math.h"
 #include "motor_control_internal.h"
 #include "motor_control_vf.h"
 
@@ -8,6 +11,7 @@
 #include "foc_pwm.h"
 
 #include "CMS32M6510.h"
+#include <stdint.h>
 
 volatile MotorControlCommand_t g_motor_command = {
     .enable = 0U,
@@ -40,6 +44,7 @@ static int16_t clamp_ref(int16_t value, int16_t limit);
 static int16_t abs_limit(int16_t value, int16_t limit);
 static int32_t clamp_s32_local(int32_t value, int32_t limit);
 static int32_t rpm_to_speed_counts(int16_t rpm);
+static void apply_runtime_commands(const MotorControlCommand_t* command);
 
 /** @brief 初始化控制层全局状态、PI 控制器和 PWM 安全态。 */
 void MotorControl_Init(void)
@@ -65,6 +70,16 @@ void MotorControl_Init(void)
                 CTRL_CUR_V_LIMIT, CTRL_CUR_PI_SHIFT);
     foc_pi_init(&s_mc.current_pi_q, CTRL_CUR_KP, CTRL_CUR_KI, -CTRL_CUR_V_LIMIT,
                 CTRL_CUR_V_LIMIT, CTRL_CUR_PI_SHIFT);
+    s_mc.current_command = (MCCurrentCommand_t){0,
+                                                          0,
+                                                          CTRL_SPD_IQ_LIMIT,
+                                                          CTRL_CUR_KP,
+                                                          CTRL_CUR_KI,
+                                                          CTRL_CUR_V_LIMIT,
+                                                          0,
+                                                          0};
+    s_mc.speed_command = (MCSpeedCommand_t){0, CTRL_SPD_KP, CTRL_SPD_KI, CTRL_SPD_IQ_LIMIT};
+    s_mc.vf_command = (MCVfCommand_t){OL_SPEED_REF, OL_VF_VOLTAGE, OL_TIMEOUT_MS};
     s_mc.current = (FocPhaseCurrent_t){0, 0, 0};
     s_mc.current_dq = (FocDq_t){0, 0};
     s_mc.id_ref_active = 0;
@@ -124,7 +139,7 @@ void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command)
     }
     s_mc.enabled = (uint8_t)(next_command.enable != 0U);
     s_mc.mode = next_mode;
-    s_mc.command = next_command;
+    apply_runtime_commands(&next_command);
     NVIC_EnableIRQ(ADC_IRQn);
 
     if ((s_mc.enabled != 0U) && (s_mc.mode == MC_MODE_VF_OPEN_LOOP))
@@ -194,18 +209,12 @@ void MotorControl_RunSlowLoop(void)
             const uint8_t should_enter_safe =
                 (uint8_t)((s_mc.state != MC_STATE_FAULT) || (s_mc.pwm_output != 0U));
             s_mc.state = MC_STATE_FAULT;
-            if (s_mc.check.current_ok == 0U)
-            {
-                s_mc.fault = MC_FAULT_CURRENT;
-            }
-            else if (((s_mc.mode == MC_MODE_CURRENT) || (s_mc.mode == MC_MODE_SPEED)) &&
-                     (s_mc.check.ma600_ok == 0U))
+            s_mc.fault = MC_FAULT_CURRENT;
+            if ((s_mc.check.current_ok != 0U) &&
+                ((s_mc.mode == MC_MODE_CURRENT) || (s_mc.mode == MC_MODE_SPEED)) &&
+                (s_mc.check.ma600_ok == 0U))
             {
                 s_mc.fault = MC_FAULT_ENCODER;
-            }
-            else
-            {
-                s_mc.fault = MC_FAULT_CURRENT;
             }
             if (should_enter_safe != 0U)
             {
@@ -301,6 +310,28 @@ static void copy_command(const volatile MotorControlCommand_t* src, MotorControl
     dst->open_loop_timeout_ms = src->open_loop_timeout_ms;
     dst->elec_zero_trim = src->elec_zero_trim;
     dst->voltage_theta_offset = src->voltage_theta_offset;
+}
+
+/** @brief 将完整外部命令拆成快环直接读取的小命令缓存。 */
+static void apply_runtime_commands(const MotorControlCommand_t* command)
+{
+    s_mc.current_command.id_ref = command->id_ref;
+    s_mc.current_command.iq_ref = command->iq_ref;
+    s_mc.current_command.iq_limit = command->iq_limit;
+    s_mc.current_command.current_kp = command->current_kp;
+    s_mc.current_command.current_ki = command->current_ki;
+    s_mc.current_command.current_v_limit = command->current_v_limit;
+    s_mc.current_command.elec_zero_trim = command->elec_zero_trim;
+    s_mc.current_command.voltage_theta_offset = command->voltage_theta_offset;
+
+    s_mc.speed_command.speed_ref = command->speed_ref;
+    s_mc.speed_command.speed_kp = command->speed_kp;
+    s_mc.speed_command.speed_ki = command->speed_ki;
+    s_mc.speed_command.iq_limit = command->iq_limit;
+
+    s_mc.vf_command.open_loop_speed_ref = command->open_loop_speed_ref;
+    s_mc.vf_command.vf_voltage = command->vf_voltage;
+    s_mc.vf_command.open_loop_timeout_ms = command->open_loop_timeout_ms;
 }
 
 /** @brief 将有符号给定限制到正负 limit。 */

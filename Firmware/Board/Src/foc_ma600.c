@@ -22,18 +22,16 @@
 #define MA600_REG_MTSP 0x1Cu
 #define MA600_ETX_MASK 0x01u
 #define MA600_ETY_MASK 0x02u
-#define MA600_MTSP_SPEED 0x80u
 #define MA600_MTSP_MULTITURN 0x00u
 #define MA600_DUMMY_BYTE 0x00u
 #define MA600_MAX_AGE 255u
 #define MA600_INIT_RETRY 3u
 #define MA600_CONFIG_RETRY 3u
 
-/** @brief MA600 最近一次角度/speed 读取缓存。 */
+/** @brief MA600 最近一次角度读取缓存。 */
 typedef struct
 {
     volatile uint16_t raw;
-    volatile int16_t speed;
     volatile uint8_t ok;
     volatile uint8_t age;
 } Ma600Cache;
@@ -50,7 +48,7 @@ static void cs_low(void);
 static void cs_high(void);
 static void drain_rx_fifo(void);
 static uint32_t xfer(uint32_t tx);
-static uint8_t xfer8(uint8_t tx, uint8_t* rx);
+static uint8_t xfer8(uint8_t tx, uint8_t *rx);
 static uint8_t wait_idle(uint32_t timeout);
 static void cache_fail(void);
 static void init_compensation_defaults(void);
@@ -59,16 +57,11 @@ static uint8_t write_verify_reg(uint8_t addr, uint8_t value);
 volatile uint32_t g_ma600_rx_drain_count;
 volatile uint8_t g_ma600_rx_drain_last;
 
-/** @brief 初始化 MA600 SPI、默认补偿寄存器和 MTSP 输出模式。 */
+/** @brief 初始化 MA600 SPI、默认补偿寄存器和 MTSP 角度输出模式。 */
 void ma600_init(void)
 {
     uint8_t retry;
-    const uint8_t mtsp =
-#if (MOT_ENCODER_MTSP_SPEED_EN != 0U)
-        MA600_MTSP_SPEED;
-#else
-        MA600_MTSP_MULTITURN;
-#endif
+    const uint8_t mtsp = MA600_MTSP_MULTITURN;
 
     /* MA600 使用手动 CS 控制，先配置 SSP，再配置复用引脚并启动外设。 */
     spi_init();
@@ -321,70 +314,10 @@ uint8_t ma600_update_fast(void)
     return 1u;
 }
 
-/** @brief ADC 快环短超时读取 32-bit angle+speed 帧并更新缓存。 */
-uint8_t ma600_update_speed_fast(void)
-{
-    uint8_t rx[4] = {0u, 0u, 0u, 0u};
-    uint32_t timeout;
-    uint8_t i;
-
-    /*
-     * MA600 在 MTSP=1 时，32-bit 连续帧返回 angle[15:0] + speed[15:0]。
-     * 该路径给速度环使用，仍保留短超时，避免 SPI 异常卡死 ADC 快环。
-     */
-    cs_low();
-    for (i = 0u; i < 4u; i++)
-    {
-        timeout = 10000u;
-        while (!SSP_GetTNFFlag())
-        {
-            if (--timeout == 0u)
-            {
-                cs_high();
-                cache_fail();
-                return 0u;
-            }
-        }
-        SSP_SendData(MA600_DUMMY_BYTE);
-
-        timeout = 10000u;
-        while (!SSP_GetRNEFlag())
-        {
-            if (--timeout == 0u)
-            {
-                cs_high();
-                cache_fail();
-                return 0u;
-            }
-        }
-        rx[i] = (uint8_t)SSP_GetData();
-    }
-    if (wait_idle(10000u) == 0u)
-    {
-        cs_high();
-        cache_fail();
-        return 0u;
-    }
-    cs_high();
-
-    s_enc.raw = ((uint16_t)rx[0] << 8) | rx[1];
-    s_enc.speed = (int16_t)(((uint16_t)rx[2] << 8) | rx[3]);
-    s_enc.ok = 1u;
-    s_enc.age = 0u;
-
-    return 1u;
-}
-
 /** @brief 返回最近缓存的 raw 角度。 */
 uint16_t ma600_raw(void)
 {
     return s_enc.raw;
-}
-
-/** @brief 返回最近缓存的 MA600 speed raw。 */
-int16_t ma600_speed_raw(void)
-{
-    return s_enc.speed;
 }
 
 /** @brief 返回最近一次缓存更新是否成功。 */
@@ -432,7 +365,7 @@ static void spi_init(void)
 }
 
 /** @brief 带超时传输一个 8-bit SPI 字节并返回成功标志。 */
-static uint8_t xfer8(uint8_t tx, uint8_t* rx)
+static uint8_t xfer8(uint8_t tx, uint8_t *rx)
 {
     uint32_t timeout = MA600_TIMEOUT;
 
@@ -488,9 +421,8 @@ static void cache_fail(void)
 static void init_compensation_defaults(void)
 {
 #if (MOT_ENCODER_SIDE_BCT_EN != 0U)
-    const uint8_t et =
-        (uint8_t)(((MOT_ENCODER_SIDE_ETX != 0U) ? MA600_ETX_MASK : 0U) |
-                  ((MOT_ENCODER_SIDE_ETY != 0U) ? MA600_ETY_MASK : 0U));
+    const uint8_t et = (uint8_t)(((MOT_ENCODER_SIDE_ETX != 0U) ? MA600_ETX_MASK : 0U) |
+                                 ((MOT_ENCODER_SIDE_ETY != 0U) ? MA600_ETY_MASK : 0U));
 
     /*
      * 这里保留旧诊断模块的“写入并回读确认”语义。在线调参 service 已冻结，

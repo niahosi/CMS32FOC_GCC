@@ -8,6 +8,10 @@
 #include <stdint.h>
 #include "Config.h" // IWYU pragma: keep
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** @brief 初始化三相互补 PWM，并保持功率输出关闭。 */
 void pwm_init(void);
 
@@ -54,5 +58,12 @@ uint8_t pwm_is_running(void);
  *
  * 参数使用 volatile 指针，方便诊断固件直接写入 Watch 变量。
  */
-void pwm_snapshot(volatile uint16_t* u, volatile uint16_t* v, volatile uint16_t* w,
-                  volatile uint8_t* out, volatile uint8_t* brake);
+void pwm_snapshot(volatile uint16_t *u,
+                  volatile uint16_t *v,
+                  volatile uint16_t *w,
+                  volatile uint8_t *out,
+                  volatile uint8_t *brake);
+
+#ifdef __cplusplus
+}
+#endif

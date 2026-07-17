@@ -4,17 +4,19 @@
  */
 
 #include "foc_bsp.h"
+#include "BoardConfig.h"
+#include "TuneConfig.h"
 #include "foc_curr.h"
 #include "foc_ma600.h"
 #include "foc_pwm.h"
 #include "CMS32M6510.h"
 #include "delay.h"
 #include "gpio.h"
+#include "system_CMS32M6510.h"
 #include <stdint.h>
 
 static void clock_init(void);
 static void gpio_init(void);
-
 
 /** @brief 按安全顺序初始化板级 FOC 外设。 */
 void bsp_init(void)
@@ -46,26 +48,16 @@ uint8_t bsp_update_angle(void)
     return ma600_update();
 }
 
-/** @brief 快环路径更新 MA600 角度缓存，按配置选择 16-bit 或 32-bit 帧。 */
+/** @brief 快环路径更新 MA600 16-bit 角度缓存。 */
 uint8_t bsp_update_angle_fast(void)
 {
-#if (MOT_ENCODER_FAST_READ_SPEED_FRAME != 0U)
-    return ma600_update_speed_fast();
-#else
     return ma600_update_fast();
-#endif
 }
 
 /** @brief 获取最近缓存的 MA600 raw。 */
 uint16_t bsp_angle_raw(void)
 {
     return ma600_raw();
-}
-
-/** @brief 获取最近缓存的 MA600 speed raw。 */
-int16_t bsp_angle_speed_raw(void)
-{
-    return ma600_speed_raw();
 }
 
 /** @brief 获取 MA600 缓存有效标志。 */

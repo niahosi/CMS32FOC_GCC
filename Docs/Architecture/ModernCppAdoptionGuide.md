@@ -115,6 +115,9 @@ extern "C" void ScrewAxis_OnAdcSample(void);
 
 ## 建议新增 Support 层
 
+Board 层 UART bring-up 先保持 C，负责最小硬件初始化和字节收发。下面目录用于
+后续 Comm 协议层，不直接替代 `Firmware/Board/Src/board_uart.c`：
+
 推荐目录：
 
 ```text
@@ -294,24 +297,20 @@ constexpr SpeedCounts to_speed_counts(Rpm rpm)
 ```cpp
 enum class SpeedFeedbackSource : uint8_t {
     RawDiff,
-    Ma600SpeedFrame,
 };
 
 template<SpeedFeedbackSource Source>
 int32_t update_speed_feedback()
 {
-    if constexpr (Source == SpeedFeedbackSource::Ma600SpeedFrame) {
-        return read_ma600_speed_frame();
-    } else {
-        return estimate_from_raw_diff();
-    }
+    static_assert(Source == SpeedFeedbackSource::RawDiff);
+    return estimate_from_raw_diff();
 }
 ```
 
 不用的分支不会进入最终代码。适合：
 
 ```text
-速度反馈源选择
+速度差分滤波策略选择
 串口协议 CRC 有/无
 诊断固件功能开关
 不同板级引脚策略
@@ -694,7 +693,7 @@ Firmware/Comm/
 串口模块分层：
 
 ```text
-CMS32 UART Driver
+Board UART byte API
   -> RingBuffer<uint8_t, N>
   -> FrameParser<MaxPayload>
   -> Command decoder

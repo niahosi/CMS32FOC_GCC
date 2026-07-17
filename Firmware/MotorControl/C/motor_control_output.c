@@ -1,6 +1,10 @@
+#include "BoardConfig.h"
+#include "TuneConfig.h"
+#include "foc_math.h"
 #include "motor_control_internal.h"
 
 #include "foc_pwm.h"
+#include <stdint.h>
 
 /** @brief 检查当前状态中的三相电流和 KCL 和是否在安全范围。 */
 uint8_t MotorControl_InternalCurrentOk(MotorControlCState* mc)
@@ -29,7 +33,7 @@ uint8_t MotorControl_InternalCurrentOk(MotorControlCState* mc)
 /** @brief 获取当前电流环/诊断电压限幅，命令未设置时回退默认值。 */
 int16_t MotorControl_InternalVoltageLimit(const MotorControlCState* mc)
 {
-    int16_t limit = mc->command.current_v_limit;
+    int16_t limit = mc->current_command.current_v_limit;
 
     if (limit <= 0)
     {

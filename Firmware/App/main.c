@@ -1,4 +1,5 @@
 #include "MotorControl.h"
+#include "board_uart.h"
 #include "cms32m6510_platform.h" // IWYU pragma: keep
 #include "foc_bsp.h"
 #include "screw_axis.h"
@@ -12,6 +13,9 @@
 int main(void)
 {
     bsp_init();
+    /* P06/P07 与 SWD 共用；BoardUart_Init() 内部先等待，再关闭 SWD 切 UART。 */
+    BoardUart_Init();
+
     MotorControl_Init();
     ScrewAxis_Init();
     MotorControl_UpdateWatch(&g_motor_status);
@@ -34,8 +38,15 @@ int main(void)
  */
 void ADC_IRQHandler(void)
 {
+    /* 防止之前 UART 访问状态影响 ADC/控制外设寄存器访问。 */
+    BoardUart_EndAccess();
+
     if (MotorControl_FastLoopFromAdcIrq() != 0U)
     {
         ScrewAxis_OnAdcSample();
     }
+
+    /* ADC 中断周期推进 UART TX，每次最多写 1 字节到 THR。 */
+    BoardUart_TxTask();
+    BoardUart_EndAccess();
 }

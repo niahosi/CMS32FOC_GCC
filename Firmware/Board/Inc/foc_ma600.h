@@ -25,13 +25,8 @@ uint8_t ma600_update(void);
 /** @brief 使用短超时路径更新角度缓存。 */
 uint8_t ma600_update_fast(void);
 
-/** @brief 使用 32-bit 帧同时更新角度和 MA600 speed 缓存。 */
-uint8_t ma600_update_speed_fast(void);
-
 /** @brief 获取角度缓存。 */
 uint16_t ma600_raw(void);
-/** @brief 获取 MA600 speed 原始 signed 16-bit 输出。 */
-int16_t ma600_speed_raw(void);
 /** @brief 判断最近一次角度缓存更新是否成功。 */
 uint8_t ma600_ok(void);
 /** @brief 获取角度缓存年龄。 */

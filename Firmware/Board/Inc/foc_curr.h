@@ -8,6 +8,10 @@
 #include <stdint.h>
 #include "Config.h" // IWYU pragma: keep
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** @brief 初始化 ADC、ADCLDO 和三相电流 PGA。 */
 void curr_init(void);
 
@@ -48,3 +52,7 @@ uint16_t curr_raw_adc_w(void);
 
 /** @brief 获取 PWM/ADC 同步采样计数；每次有效解析后递增。 */
 uint32_t curr_sync_count(void);
+
+#ifdef __cplusplus
+}
+#endif

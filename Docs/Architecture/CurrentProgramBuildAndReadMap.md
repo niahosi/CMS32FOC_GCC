@@ -437,7 +437,7 @@ MotorControlVf_RunFastLoop()
   -> 检查 open_loop_timeout
   -> update_open_loop_theta()
   -> MotorControl_InternalApplyVoltageVector(vd=0, vq=vf_voltage, theta=open_loop_theta)
-  -> 定期读 MA600，仅用于观察角度/速度
+  -> 定期读 MA600 角度，速度观察由 raw 差分得到
 ```
 
 VF 的角度来自内部开环积分，不来自编码器。编码器在 VF 下主要用于看转子是否跟上。

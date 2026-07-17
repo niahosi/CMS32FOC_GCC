@@ -1,6 +1,11 @@
 #pragma once
 
 #include "motor_control_internal.h"
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /** @brief 初始化 VF 应急开环状态。 */
 void MotorControlVf_Init(void);
@@ -11,10 +16,14 @@ void MotorControlVf_Init(void);
  */
 void MotorControlVf_ResetForMode(uint8_t mode);
 /** @brief 运行 VF 应急开环快环。 */
-void MotorControlVf_RunFastLoop(MotorControlCState* mc);
+void MotorControlVf_RunFastLoop(MotorControlCState *mc);
 /** @brief 获取 VF 开环角。 */
 uint16_t MotorControlVf_OpenLoopTheta(void);
 /** @brief 获取 VF 开环角累计 tick。 */
 uint32_t MotorControlVf_OpenLoopTicks(void);
 /** @brief 获取 VF 开环角重置次数。 */
 uint32_t MotorControlVf_OpenLoopResetCount(void);
+
+#ifdef __cplusplus
+}
+#endif

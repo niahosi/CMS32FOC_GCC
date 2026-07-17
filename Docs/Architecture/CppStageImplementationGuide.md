@@ -1,784 +1,877 @@
-# Cpp Stage Implementation Guide
+# C/C++ Hybrid Stage Implementation Guide
 
-本文是 C++ 重构的分阶段练习文档。它和 `CppRefactorRoadmap.md` 的关系是：
+本文是当前工程的 C/C++ 混编分阶段实践文档。它不再把目标写成“把所有 C 文件改成 C++”，而是按嵌入式 Modern C++ 的思路，把 C 和 C++ 各自放在最适合的位置。
 
-```text
-CppRefactorRoadmap.md         讲路线和模块顺序
-CppStageImplementationGuide.md 讲每一阶段怎么写、为什么这么拆、完整代码长什么样
-SupportCppHandsOnGuide.md      专门讲 Firmware/Support/*.hpp
-```
-
-这里的代码是“参考形态”，不是要求马上全量替换当前 C 文件。当前原则仍然是：
+参考方向：
 
 ```text
-保持 C ABI
-不碰动态内存
-不引入异常/RTTI
-不在快环使用 virtual
-不为了封装而封装
+https://awesome-embedded-learning-studio.github.io/Tutorial_AwesomeModernCPP/vol8-domains/embedded/
 ```
 
-## 模块层级判断
-
-先回答一个很重要的问题：`ScrewAxis` 为什么单独成模块？回零程序和 `ScrewAxis` 是不是同等级？
-
-推荐判断：
+本文和其它文档的关系：
 
 ```text
-ScrewAxis 是“轴级应用模块”
-Home/Homing 是 ScrewAxis 里面的一个“行为小组件”
-MotorControl 是底层电机控制模块
-Comm 是通信模块
-Board 是板级硬件模块
-Support 是无业务工具模块
+CppRefactorRoadmap.md                  讲长期路线和阶段顺序
+CppStageImplementationGuide.md         讲当前阶段怎么混编、边界怎么落
+SupportCppHandsOnGuide.md              专门讲 Firmware/Support/*.hpp
+MotorControlCoreCppHandsOnGuide.md    专门讲第四阶段核心调度层怎么手写
+CurrentProgramTheoryAndParameterGuide.md 讲当前程序和参数数学
 ```
 
-所以它们不是同等级：
+## 总方向：不是全 C++，是混编
+
+这个工程最适合的方向是：
 
 ```text
-App/ScrewAxis
-  -> HomeRuntime
-  -> home_update()
-  -> command/status helper
-  -> later: ScrewHomeController / ScrewPositionTracker
-
-MotorControl
-  -> CurrentLoop
-  -> SpeedLoop
-  -> EncoderEstimator
-
-Comm
-  -> UartRx
-  -> FrameParser
-  -> CommandRouter
+C 负责硬件边界、C ABI、已验证快环和调试可见结构
+C++ 负责类型安全、状态机、配置校验、命令解析和纯算法封装
 ```
 
-`ScrewAxis` 单独存在的原因是：它描述的是“这根螺杆轴”这个业务对象。它知道当前轴怎么回零、怎么记录零位、怎么把轴级命令转换成 `MotorControl` 的速度/电流命令。
-
-回零不是和 `ScrewAxis` 同级。回零是 `ScrewAxis` 的一种行为。现在只有回零时，可以先放在 `screw_axis.cpp` 内部；当出现下面任意情况，就值得拉成小模块：
+不要把“用 C++”理解成：
 
 ```text
-回零状态机超过 150~200 行
-还有软限位/位置跟踪/通信命令仲裁
-Home 的状态、参数、watch 开始影响 ScrewAxis 可读性
-某段逻辑能用一句话命名，例如 ScrewHomeController
+所有 .c 立刻改成 .cpp
+所有 #define 立刻删除
+所有结构体都包 getter/setter
+所有模块都抽 class
 ```
 
-不建议一开始就把所有小函数都拆文件。拆模块的目的不是目录好看，而是让依赖关系清楚：
+更准确的目标是：
 
 ```text
-ScrewAxis 负责协调
-HomeRuntime 只保存回零运行态
-command/status helper 只负责集中读写对外快照
-CommandRouter 以后只负责命令来源仲裁
+寄存器访问仍直接
+中断入口仍清楚
+Ozone/watch 数字仍稳定
+快环行为先不变
+新写的规则和状态逐步类型安全
+业务宏最终退场
 ```
 
-## Stage 1: Support 小组件
+## 当前阶段状态
 
-这一阶段已经单独写在：
+当前工程已经走到第四阶段附近：
 
 ```text
-Docs/Architecture/SupportCppHandsOnGuide.md
+Stage 1 Support:
+  Firmware/Support/*.hpp 已有 clamp / units / irq_guard / ring_buffer 等基础工具。
+
+Stage 2 ScrewAxis:
+  screw_axis.cpp 已经使用 enum class、constexpr 和 helper，保留 ScrewAxis_* C ABI。
+
+Stage 3 UART bring-up:
+  Board 层 UART 调通，底层 board_uart.c 保持 C。
+  后续协议 parser / router 再用 C++。
+
+Stage 4 MotorControl 核心调度层:
+  当前正在做。目标是先迁命令复制、模式判断、状态枚举、慢环状态机。
+  不动 ADC 快环算法。
 ```
 
-你当前正在写的 `Firmware/Support/*.hpp` 就属于这一阶段。
-
-这一阶段要练熟这些 C++ 特性：
+当前 `Firmware/MotorControl/Cpp/` 里已有草稿文件，但要先统一命名和职责：
 
 ```text
-constexpr
-template
-static_assert
-enum class helper
-固定数组
-RAII 小对象
+motor_control_type.hpp      -> motor_control_types.hpp
+motor_contrl_core.cpp       -> motor_control_core.cpp
+motor_command_sanitizer.hpp -> 保留，但补完整
 ```
 
-最小验收标准：
+CMake 变量也统一为：
+
+```cmake
+set(CMS32_MOTOR_CPP_DIR ${CMS32_MOTOR_DIR}/Cpp)
+```
+
+不要使用大小写混杂的 `CMS32_MOTOR_Cpp_DIR`。
+
+## 混编边界
+
+### C 继续负责什么
+
+这些部分继续优先用 C：
 
 ```text
-每个 .hpp 都能单独被 C++ 编译器 include
-不出现 new/delete/throw/typeinfo/vtable
-不依赖业务模块内部状态
+startup / IRQ vector
+CMSIS / vendor driver
+底层寄存器访问
+PWM / ADC / PGA / MA600 最底层驱动
+已验证 Current/Speed 快环 C 实现
+Ozone 可见的 C ABI 结构体和全局变量
 ```
 
-## Stage 2: ScrewAxis 单文件轻量 C++ 化
-
-这一阶段不要写复杂架构。目标只是把 `screw_axis.c` 变成一个更清楚的
-`screw_axis.cpp`：
+原因：
 
 ```text
-screw_axis.h    保持 C ABI、Command/Status 结构体、Ozone 可见入口
-screw_axis.cpp  内部用少量 C++ 特性整理状态机
+寄存器访问要透明
+中断入口要明确
+调试器看 C 结构体最直接
+vendor 头文件和驱动天然是 C
+快环在没有对照测试前不适合大改
 ```
 
-对外入口继续不变：
+### C++ 负责什么
 
-```cpp
-extern "C" void ScrewAxis_Init(void);
-extern "C" void ScrewAxis_Run(void);
-extern "C" void ScrewAxis_OnAdcSample(void);
-```
-
-第一版只做这些事：
+这些部分优先用 C++：
 
 ```text
-宏参数 -> constexpr
-SCREW_HOME_STATE_* 内部映射成 enum class HomeState
-clamp_s16/clamp_u16 -> support::clamp
-内部状态集中到 HomeRuntime
-Status 只保留稳定字段，调试遥测先不放
-重复写 command/status 的地方收成少量 helper
+状态机 enum class
+单位类型 Rpm / CurrentCount / VoltageCount / SpeedCounts / Angle16
+命令清洗 CommandSanitizer
+配置镜像 constexpr + static_assert
+串口协议 parser / router
+固定容量 ring buffer
+纯数学小组件 PI / slew / filter / estimator
+短临界区 RAII guard
 ```
 
-第一版不要做这些事：
+原因：
 
 ```text
-不要拆 ScrewHomeController.hpp/.cpp
-不要写 HomeCommandView / MotorFeedbackView / Adapter
-不要给每个字段写 getter/setter
-不要把 g_motor_command 封装成复杂对象
-不要动 MotorControl 快环和 main.c 入口
+这些地方容易因为裸整数混用出错
+这些地方不需要动态内存
+这些地方可以零开销内联
+这些地方适合编译期检查
 ```
 
-### Status 先瘦身
+### 对外边界继续用 C ABI
 
-`ScrewHomeStatus_t` 不要一开始就放很多观测字段。第一版建议只保留外部真正要依赖的稳定状态：
+对外入口继续保留：
 
 ```c
-typedef struct
-{
-    uint8_t busy;
-    uint8_t homed;
-    uint8_t fault_seen;
-    uint8_t state;
-    uint16_t active_seq;
-    int32_t zero_encoder_pos;
-    int32_t pos_counts;
-} ScrewHomeStatus_t;
+void MotorControl_Init(void);
+void MotorControl_ApplyCommand(const volatile MotorControlCommand_t* command);
+void MotorControl_RunSlowLoop(void);
+uint8_t MotorControl_FastLoopFromAdcIrq(void);
+void MotorControl_UpdateWatch(volatile MotorControlWatch_t* out);
+
+void ScrewAxis_Init(void);
+void ScrewAxis_Run(void);
+void ScrewAxis_OnAdcSample(void);
 ```
 
-先不要放这些：
-
-```text
-active_speed_rpm
-active_slow_speed_rpm
-active_backoff_speed_rpm
-elapsed_ms
-remaining_ms
-stall_elapsed_ms
-```
-
-这些属于调试遥测，不是稳定状态。真需要时以后单独加：
-
-```c
-typedef struct
-{
-    int16_t active_speed_rpm;
-    uint16_t elapsed_ms;
-    uint16_t remaining_ms;
-    uint16_t stall_elapsed_ms;
-} ScrewHomeTelemetry_t;
-```
-
-这样 `screw_axis.cpp` 不会被一堆 watch 赋值淹没。
-
-### 文件结构
-
-当前推荐只有两个文件：
-
-```text
-Firmware/App/screw_axis.h
-Firmware/App/screw_axis.cpp
-```
-
-以后真的复杂了，再考虑拆：
-
-```text
-Firmware/App/ScrewAxis/
-├── screw_axis.cpp
-├── screw_home_controller.hpp
-└── screw_position_tracker.hpp
-```
-
-拆文件的条件不是“看起来更面向对象”，而是：
-
-```text
-回零状态机超过 150~200 行
-开始加入软限位/位置模式/多命令来源仲裁
-某段逻辑能独立命名，并且有自己的状态
-```
-
-### screw_axis.cpp 推荐骨架
-
-下面只保留第一版需要的最小骨架，不再展开完整状态机：
+C++ 文件里这样导出：
 
 ```cpp
-namespace {
-enum class HomeState : uint8_t { Idle, FastRetract, FastBackoff, SlowRetract, FinalBackoff, Done, Fault };
-
-struct HomeRuntime {
-    HomeState state{HomeState::Idle};
-    uint16_t last_start_seq{0U};
-    uint32_t phase_start_ms{0U};
-};
-
-HomeRuntime s_home;
-volatile uint32_t s_adc_samples;
-
-uint32_t app_millis() noexcept;
-void publish_state(HomeState state) noexcept;
-void command_speed(int16_t speed_rpm) noexcept;
-void stop_motor(uint8_t keep_enabled) noexcept;
-void start_home(uint32_t now_ms) noexcept;
-bool update_home() noexcept;
+extern "C" void MotorControl_RunSlowLoop(void)
+{
+    // C++ implementation, C symbol.
 }
-
-extern "C" void ScrewAxis_Init(void);
-extern "C" void ScrewAxis_Run(void);
-extern "C" void ScrewAxis_OnAdcSample(void);
 ```
 
-这就是第一版该长的样子：
+这样 `main.c`、中断入口、Ozone/watch 和旧 C 模块都不用知道内部已经换成 C++。
+
+## define 怎么退场
+
+最终确实要减少业务 `#define`，但不能一刀切。分三类处理。
+
+### 1. vendor / CMSIS / 寄存器宏：保留
+
+这些宏不属于业务规则：
 
 ```text
-只有一个 .cpp，没有额外类文件
-没有 View/Adapter 层
-没有 getter/setter
-全局 command/status 仍然直接可见，方便 Ozone 调试
-Status 字段少，不会在每个状态里反复写一堆观测量
-重复的电机命令和状态发布被收成小 helper
-状态机仍然是 switch，嵌入式工程师一眼能看懂
+UART0
+ADC_IRQn
+GPIO register bit
+CMSIS intrinsic
+vendor driver constants
 ```
 
-### 什么时候再拆模块
+没必要强行替换。
 
-先不要拆。等出现下面情况再拆：
+### 2. C/C++ 过渡协议宏：先保留，再收敛
 
-```text
-回零以外又加入位置模式/软限位
-串口、Ozone、自动流程都要抢写命令，需要命令仲裁
-HomeRuntime 字段继续增加，update_home() 超过 200 行
-某段逻辑可以独立测试，例如 PositionTracker 或 CommandRouter
+例如：
+
+```c
+#define MC_STATE_IDLE 0U
+#define MC_MODE_SPEED 2U
+#define MC_FAULT_ENCODER 4U
 ```
 
-那时再把：
-
-```text
-HomeRuntime + update_home()
-```
-
-抽成：
-
-```text
-ScrewHomeController
-```
-
-现在不用。
-
-## Stage 3: 串口 Comm 第一版
-
-串口模块建议从一开始就拉出来，原因是它的实时边界和业务边界都很清楚：
-
-```text
-UART ISR 只接字节
-RingBuffer 缓冲
-主循环解析协议
-CommandRouter 写 g_motor_cmd/g_screw_home_cmd
-```
-
-### serial_protocol.hpp 完整示例
-
-第一版协议尽量固定长度或小 payload，不用动态内存。
+只要 C 文件还在用，就先保留。C++ 里先包装：
 
 ```cpp
-#pragma once
-
-#include <stddef.h>
-#include <stdint.h>
-
-namespace cms32::comm {
-
-enum class CommandId : uint8_t {
-    SetSpeedRpm = 0x01U,
-    StartHome = 0x10U,
-    StopHome = 0x11U,
-    ReadMotorWatch = 0x80U,
-    ReadHomeWatch = 0x81U,
+enum class ControlMode : uint8_t
+{
+    Off = MC_MODE_OFF,
+    Current = MC_MODE_CURRENT,
+    Speed = MC_MODE_SPEED,
+    VfOpenLoop = MC_MODE_VF_OPEN_LOOP,
 };
-
-enum class ParseResult : uint8_t {
-    NeedMore,
-    FrameReady,
-    BadHeader,
-    BadLength,
-    BadChecksum,
-};
-
-template <size_t MaxPayload>
-struct Frame {
-    static_assert(MaxPayload <= 64U, "keep protocol payload small");
-
-    CommandId id{};
-    uint8_t payload[MaxPayload]{};
-    uint8_t length{0U};
-};
-
-template <size_t MaxPayload>
-class FrameParser {
-public:
-    ParseResult feed(uint8_t byte, Frame<MaxPayload>& out) noexcept
-    {
-        switch (state_) {
-        case State::WaitHeader0:
-            if (byte != kHeader0) {
-                return ParseResult::BadHeader;
-            }
-            checksum_ = byte;
-            state_ = State::WaitHeader1;
-            return ParseResult::NeedMore;
-
-        case State::WaitHeader1:
-            if (byte != kHeader1) {
-                reset();
-                return ParseResult::BadHeader;
-            }
-            checksum_ ^= byte;
-            state_ = State::ReadCommand;
-            return ParseResult::NeedMore;
-
-        case State::ReadCommand:
-            out.id = static_cast<CommandId>(byte);
-            checksum_ ^= byte;
-            state_ = State::ReadLength;
-            return ParseResult::NeedMore;
-
-        case State::ReadLength:
-            if (byte > MaxPayload) {
-                reset();
-                return ParseResult::BadLength;
-            }
-            out.length = byte;
-            index_ = 0U;
-            checksum_ ^= byte;
-            state_ = (byte == 0U) ? State::ReadChecksum : State::ReadPayload;
-            return ParseResult::NeedMore;
-
-        case State::ReadPayload:
-            out.payload[index_++] = byte;
-            checksum_ ^= byte;
-            if (index_ >= out.length) {
-                state_ = State::ReadChecksum;
-            }
-            return ParseResult::NeedMore;
-
-        case State::ReadChecksum:
-            if (byte != checksum_) {
-                reset();
-                return ParseResult::BadChecksum;
-            }
-            reset();
-            return ParseResult::FrameReady;
-        }
-
-        reset();
-        return ParseResult::BadHeader;
-    }
-
-    void reset() noexcept
-    {
-        state_ = State::WaitHeader0;
-        index_ = 0U;
-        checksum_ = 0U;
-    }
-
-private:
-    enum class State : uint8_t {
-        WaitHeader0,
-        WaitHeader1,
-        ReadCommand,
-        ReadLength,
-        ReadPayload,
-        ReadChecksum,
-    };
-
-    static constexpr uint8_t kHeader0 = 0xA5U;
-    static constexpr uint8_t kHeader1 = 0x5AU;
-
-    State state_{State::WaitHeader0};
-    uint8_t index_{0U};
-    uint8_t checksum_{0U};
-};
-
-} // namespace cms32::comm
 ```
 
-### command_router.hpp 完整示例
+这一步的目的不是“保留 define”，而是保证迁移期间只有一套数字协议。等使用这些宏的 C 文件都迁完，再把宏删除，让 `enum class` 成为唯一来源。
 
-Router 是协议和业务之间的唯一桥。串口解析器不应该直接到处写全局变量。
+### 3. 业务配置宏：迁成 constexpr config
 
-```cpp
-#pragma once
+例如：
 
-#include "MotorControl.h"
-#include "screw_axis.h"
-#include "serial_protocol.hpp"
-
-namespace cms32::comm {
-
-class CommandRouter {
-public:
-    bool route(const Frame<16>& frame) noexcept
-    {
-        switch (frame.id) {
-        case CommandId::SetSpeedRpm:
-            return handle_set_speed(frame);
-
-        case CommandId::StartHome:
-            g_screw_home_cmd.start_seq++;
-            g_screw_home_cmd.stop = 0U;
-            return true;
-
-        case CommandId::StopHome:
-            g_screw_home_cmd.stop = 1U;
-            return true;
-
-        case CommandId::ReadMotorWatch:
-        case CommandId::ReadHomeWatch:
-            // 第一版可以先只设置标志，发送侧在主循环里处理。
-            return true;
-        }
-
-        return false;
-    }
-
-private:
-    static int16_t read_i16_le(const uint8_t* p) noexcept
-    {
-        return static_cast<int16_t>(
-            static_cast<uint16_t>(p[0]) |
-            (static_cast<uint16_t>(p[1]) << 8U));
-    }
-
-    bool handle_set_speed(const Frame<16>& frame) noexcept
-    {
-        if (frame.length != 2U) {
-            return false;
-        }
-
-        g_motor_cmd.enable = 1U;
-        g_motor_cmd.control_mode = 2U;
-        g_motor_cmd.speed_ref_rpm = read_i16_le(frame.payload);
-        return true;
-    }
-};
-
-} // namespace cms32::comm
+```c
+#define CTRL_SPD_KP 32
+#define CTRL_SPD_KI 3
+#define CTRL_SPD_ERR_SHIFT 10u
 ```
 
-### serial_app.cpp 完整示例
+迁移第一步不是删除，而是镜像：
 
 ```cpp
+struct SpeedLoopConfig
+{
+    static constexpr int16_t kp = CTRL_SPD_KP;
+    static constexpr int16_t ki = CTRL_SPD_KI;
+    static constexpr uint8_t shift = CTRL_SPD_ERR_SHIFT;
+};
+
+static_assert(SpeedLoopConfig::shift < 15U);
+```
+
+等速度环实现迁到 C++ 后，再把值写成 C++ 原生来源：
+
+```cpp
+struct SpeedLoopConfig
+{
+    static constexpr int16_t kp = 32;
+    static constexpr int16_t ki = 3;
+    static constexpr uint8_t shift = 10U;
+};
+```
+
+最后删除旧宏。
+
+## Stage 1: Support 层
+
+Support 是无业务工具层。它不应该知道 MotorControl、ScrewAxis、Board 的业务含义。
+
+当前目录：
+
+```text
+Firmware/Support/
+├── clamp.hpp
+├── enum_utils.hpp
+├── irq_guard.hpp
+├── low_pass.hpp
+├── ring_buffer.hpp
+├── slew_limiter.hpp
+├── static_asserts.hpp
+└── units.hpp
+```
+
+适合放这里：
+
+```text
+template clamp
+unit wrapper
+SPSC ring buffer
+RAII IRQ guard
+low pass
+slew limiter
+enum to_underlying
+通用 static_assert helper
+```
+
+不适合放这里：
+
+```text
+ControlMode
+MotorControlCommand sanitizer
+ScrewHomeState
+UART command id
+FOC speed loop config
+Board pin map
+```
+
+这些是业务层含义，应该放在自己的模块里。
+
+验收：
+
+```sh
+arm-none-eabi-g++ -std=c++17 -mcpu=cortex-m0plus -mthumb \
+  -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit \
+  -I Firmware/Support \
+  -I Firmware/Board/Config \
+  -I Firmware/MotorControl/Inc \
+  -I Firmware/ThirdParty/Cmsemicon/CMS32M65xx/CMSIS/Include \
+  -I Firmware/ThirdParty/Cmsemicon/CMS32M65xx/Device/Include \
+  -I Firmware/ThirdParty/Cmsemicon/CMS32M65xx/Driver/inc \
+  -x c++ -c -o /tmp/cms32_support_check.o - <<'CPP'
+#include "clamp.hpp"
+#include "enum_utils.hpp"
+#include "irq_guard.hpp"
+#include "low_pass.hpp"
 #include "ring_buffer.hpp"
-#include "serial_protocol.hpp"
-#include "command_router.hpp"
-
-namespace {
-
-cms32::support::RingBuffer<uint8_t, 128> s_uart_rx;
-cms32::comm::FrameParser<16> s_parser;
-cms32::comm::Frame<16> s_frame;
-cms32::comm::CommandRouter s_router;
-
-} // namespace
-
-extern "C" void Serial_OnRxByteFromIrq(uint8_t byte)
-{
-    (void)s_uart_rx.push_isr(byte);
-}
-
-extern "C" void Serial_Run(void)
-{
-    uint8_t byte = 0U;
-    while (s_uart_rx.pop(byte)) {
-        const cms32::comm::ParseResult result = s_parser.feed(byte, s_frame);
-        if (result == cms32::comm::ParseResult::FrameReady) {
-            (void)s_router.route(s_frame);
-        }
-    }
-}
+#include "slew_limiter.hpp"
+#include "units.hpp"
+int main() { return 0; }
+CPP
 ```
 
-注意：
+## Stage 2: ScrewAxis 应用层 C++ 化
+
+这一阶段已经基本完成，方向继续保持：
 
 ```text
-ISR 入口只 push byte
-Serial_Run 在主循环执行
-第一版不在 ISR 里路由命令
-发送 watch 可以后续另写 TxBuilder，不要混在 Parser 里
+screw_axis.h:
+  保持 C ABI、Command/Watch 结构体、Ozone 可见入口。
+
+screw_axis.cpp:
+  内部用 enum class / constexpr / support::clamp 整理回零状态机。
 ```
 
-## Stage 4: MotorControl 慢环外壳
+对外入口不变：
 
-这一阶段先不动 ADC 快环。目标是把命令复制、模式判断、状态枚举变清楚。
+```cpp
+extern "C" void ScrewAxis_Init(void);
+extern "C" void ScrewAxis_Run(void);
+extern "C" void ScrewAxis_OnAdcSample(void);
+```
 
-### motor_control_types.hpp 完整示例
+当前还可以继续收敛的点：
+
+```text
+kMotorModeSpeed = 2U 这种裸数字，后续改成 MotorControl 类型层提供的 ControlMode::Speed。
+speed_rpm / iq_limit 可以逐步使用 Rpm / CurrentCount。
+当位置模式、软限位或多命令来源出现后，再拆 ScrewHomeController。
+```
+
+暂时不要做：
+
+```text
+不要给 g_motor_cmd 包复杂 setter/getter。
+不要把一个清楚的 switch 状态机拆成一堆小类。
+不要为了目录好看把 Home 过早拆出去。
+```
+
+## Stage 3: UART / Comm 混编
+
+这一阶段分两层。
+
+底层 Board UART 继续 C：
+
+```text
+Firmware/Board/Src/board_uart.c
+Firmware/Board/Inc/board_uart.h
+```
+
+原因：
+
+```text
+寄存器访问多
+IRQ 入口简单
+已经调通
+需要保留 END 访问结束要求
+```
+
+协议层和命令路由用 C++：
+
+```text
+Firmware/Comm/
+├── serial_protocol.hpp
+├── command_router.hpp
+└── serial_app.cpp
+```
+
+建议接口：
+
+```cpp
+extern "C" void Serial_OnRxByteFromIrq(uint8_t byte);
+extern "C" void Serial_Run(void);
+```
+
+UART ISR 里只做：
+
+```text
+读 RBR
+push byte
+清中断 / END
+```
+
+主循环里做：
+
+```text
+pop byte
+FrameParser::feed()
+CommandRouter::route()
+```
+
+这对应 embedded 教程里的 UART 路线：
+
+```text
+中断基础
+lock-free SPSC ring buffer
+IRQ handler 很薄
+command processor 放主循环
+compile-time fixed payload
+```
+
+第一版 CommandRouter 只能写公共命令：
+
+```text
+g_motor_cmd
+g_screw_home_cmd
+```
+
+不要写 MotorControl 内部 `s_mc`。
+
+## Stage 4: MotorControl 核心调度层
+
+这是当前阶段。
+
+目标：
+
+```text
+把 motor_control_c.c 里的核心调度层迁成 C++。
+保留 MotorControl.h 的 C ABI。
+不动 Current/Speed ADC 快环实现。
+不动 Encoder/Output/VF C 文件。
+```
+
+### Stage 4.0 先清理命名
+
+先统一文件名：
+
+```text
+Firmware/MotorControl/Cpp/motor_control_types.hpp
+Firmware/MotorControl/Cpp/motor_control_config.hpp
+Firmware/MotorControl/Cpp/motor_command_sanitizer.hpp
+Firmware/MotorControl/Cpp/motor_control_core.cpp
+```
+
+不要使用：
+
+```text
+motor_control_type.hpp
+motor_control_core.cpp
+```
+
+CMake 统一：
+
+```cmake
+set(CMS32_MOTOR_CPP_DIR ${CMS32_MOTOR_DIR}/Cpp)
+```
+
+### Stage 4.1 motor_control_types.hpp
+
+先让 C++ 代码不再直接传裸 `uint8_t`。
 
 ```cpp
 #pragma once
 
 #include <stdint.h>
 
-namespace cms32::motor {
+#include "motor_control_internal.h"
 
-enum class ControlMode : uint8_t {
-    Current = 1U,
-    Speed = 2U,
-    Vf = 3U,
+namespace cms32::motor
+{
+
+enum class ControlState : uint8_t
+{
+    Idle = MC_STATE_IDLE,
+    ClosedLoop = MC_STATE_CLOSED_LOOP,
+    Fault = MC_STATE_FAULT,
 };
 
-enum class ControlState : uint8_t {
-    Idle = 0U,
-    ClosedLoop = 3U,
-    Fault = 4U,
+enum class ControlMode : uint8_t
+{
+    Off = MC_MODE_OFF,
+    Current = MC_MODE_CURRENT,
+    Speed = MC_MODE_SPEED,
+    VfOpenLoop = MC_MODE_VF_OPEN_LOOP,
+    AlignLock = MC_MODE_ALIGN_LOCK,
+    EncoderVoltage = MC_MODE_ENCODER_VOLTAGE,
 };
 
-enum class FaultReason : uint8_t {
-    None = 0U,
-    Encoder = 1U,
-    Current = 2U,
-    Pwm = 3U,
-    Command = 4U,
+enum class ControlFault : uint8_t
+{
+    None = MC_FAULT_NONE,
+    UnsupportedMode = MC_FAULT_UNSUPPORTED_MODE,
+    Current = MC_FAULT_CURRENT,
+    OpenLoopTimeout = MC_FAULT_OPEN_LOOP_TIMEOUT,
+    Encoder = MC_FAULT_ENCODER,
 };
+
+constexpr ControlMode to_control_mode(uint8_t value) noexcept
+{
+    return static_cast<ControlMode>(value);
+}
 
 constexpr bool is_closed_loop_mode(ControlMode mode) noexcept
 {
     return (mode == ControlMode::Current) || (mode == ControlMode::Speed);
 }
 
-} // namespace cms32::motor
-```
-
-### command_sanitizer.hpp 完整示例
-
-这个小组件只做命令限幅。它不读硬件、不改状态机、不关中断。
-
-```cpp
-#pragma once
-
-#include "MotorControl.h"
-#include "clamp.hpp"
-
-namespace cms32::motor {
-
-class CommandSanitizer {
-public:
-    MotorControlCommand_t sanitize(const volatile MotorControlCommand_t& input) const noexcept
-    {
-        MotorControlCommand_t out{};
-
-        out.enable = input.enable;
-        out.control_mode = input.control_mode;
-        out.id_ref = support::clamp<int16_t>(input.id_ref, -1000, 1000);
-        out.iq_ref = support::clamp<int16_t>(input.iq_ref, -1000, 1000);
-        out.speed_ref = input.speed_ref;
-        out.speed_ref_rpm = support::clamp<int16_t>(input.speed_ref_rpm,
-                                                    -5000, 5000);
-        out.iq_limit = support::clamp<int16_t>(input.iq_limit, 0, 1000);
-        out.current_kp = input.current_kp;
-        out.current_ki = input.current_ki;
-        out.speed_kp = input.speed_kp;
-        out.speed_ki = input.speed_ki;
-        out.current_v_limit = input.current_v_limit;
-        out.open_loop_speed_ref = input.open_loop_speed_ref;
-        out.vf_voltage = input.vf_voltage;
-        out.if_id_ref = input.if_id_ref;
-        out.if_iq_ref = input.if_iq_ref;
-        out.open_loop_timeout_ms = input.open_loop_timeout_ms;
-        out.elec_zero_trim = input.elec_zero_trim;
-        out.voltage_theta_offset = input.voltage_theta_offset;
-        return out;
-    }
-};
+constexpr bool is_supported_run_mode(ControlMode mode) noexcept
+{
+    return (mode == ControlMode::VfOpenLoop) || is_closed_loop_mode(mode);
+}
 
 } // namespace cms32::motor
 ```
 
-注意：
+这里仍然引用 `MC_*` 宏，是因为 C 文件还没退场。后续 `motor_control_current.c`、`motor_control_vf.c`、`motor_control_watch.c` 都迁完后，再让 enum 成为唯一数字源。
+
+### Stage 4.2 motor_control_config.hpp
+
+把业务配置宏先镜像成 C++ `constexpr`。
+
+为什么用 `struct + static constexpr`：
 
 ```text
-CommandSanitizer 是纯值处理
-它可以被单元测试或单独编译检查
-真正写入 s_mc.command 时再用 AdcIrqGuard 包很短临界区
+struct:
+  只负责分组，例如 CurrentLoopConfig / SpeedLoopConfig / EncoderConfig。
+  这里不创建对象，不给每个对象存一份参数。
+
+static:
+  表示参数属于类型本身，用 CurrentLoopConfig::ref_limit 访问。
+  不是运行时实例字段。
+
+constexpr:
+  表示值可在编译期确定。
+  可以参与 static_assert、模板参数和编译期换算。
+  正常使用时通常不会占 RAM。
 ```
 
-## Stage 5: 快环小组件，而不是整条快环模板化
-
-FOC 快环先不要整条 C++ 化。更稳的方式是替换内部小算法：
+这和 `SupportCppHandsOnGuide.md` 里的思路一致：
 
 ```text
-速度目标斜坡 -> SlewLimiter<int16_t, Step>
-速度反馈滤波 -> LowPassI32<Shift>
-角度值 -> Angle16
-PI 参数 -> FixedPiConfig
+能在编译期确定的规则，不放到运行时判断。
+能按类型分组的参数，不散落成一堆裸宏。
+能让编译器检查的约束，不等上板后才查。
 ```
 
-### fixed_pi.hpp 完整示例
+当前阶段还不能直接删除宏，因为 C 快环仍然使用 `CTRL_*` / `MOT_*`。所以第一版 `motor_control_config.hpp` 是“镜像层”：
+
+```text
+数值源头仍是 BoardConfig.h / TuneConfig.h / motor_control_internal.h。
+C++ 新代码优先使用 CurrentLoopConfig::kp 这种名字。
+等对应 C 模块迁完，再把参数源头移到 C++ config 并删除业务宏。
+```
 
 ```cpp
 #pragma once
 
 #include <stdint.h>
 
-#include "clamp.hpp"
+#include "Config.h"
 
-namespace cms32::motor {
+namespace cms32::motor
+{
 
-template <uint8_t Shift, int16_t OutputLimit>
-class FixedPi {
-public:
-    static_assert(Shift < 15U, "PI shift too large");
-    static_assert(OutputLimit > 0, "output limit must be positive");
-
-    int16_t update(int16_t error, int16_t kp, int16_t ki) noexcept
-    {
-        integral_ += static_cast<int32_t>(error) * ki;
-
-        const int32_t raw =
-            (static_cast<int32_t>(error) * kp + integral_) >> Shift;
-        const int32_t limited =
-            support::clamp<int32_t>(raw, -OutputLimit, OutputLimit);
-        const int16_t out = static_cast<int16_t>(limited);
-
-        // 最小 anti-windup：输出已经打满且误差还在同向推动时，回退本次积分。
-        if (((out >= OutputLimit) && (error > 0)) ||
-            ((out <= -OutputLimit) && (error < 0))) {
-            integral_ -= static_cast<int32_t>(error) * ki;
-        }
-
-        return out;
-    }
-
-    void reset() noexcept
-    {
-        integral_ = 0;
-    }
-
-    int32_t integral() const noexcept
-    {
-        return integral_;
-    }
-
-private:
-    int32_t integral_{0};
+struct CurrentLoopConfig
+{
+    static constexpr int16_t ref_limit = CTRL_CUR_REF_LIMIT;
+    static constexpr int16_t voltage_limit = CTRL_CUR_V_LIMIT;
+    static constexpr uint8_t pi_shift = CTRL_CUR_PI_SHIFT;
+    static constexpr int16_t kp = CTRL_CUR_KP;
+    static constexpr int16_t ki = CTRL_CUR_KI;
+    static constexpr int16_t ref_ramp_step = CTRL_CUR_REF_RAMP_STEP;
 };
+
+struct SpeedLoopConfig
+{
+    static constexpr int32_t estimate_hz = CTRL_SPD_EST_HZ;
+    static constexpr uint8_t startup_blank_samples = CTRL_SPD_STARTUP_BLANK_SAMPLES;
+    static constexpr int16_t kp = CTRL_SPD_KP;
+    static constexpr int16_t ki = CTRL_SPD_KI;
+    static constexpr uint8_t err_shift = CTRL_SPD_ERR_SHIFT;
+    static constexpr uint8_t filter_shift = CTRL_SPD_FILTER_SHIFT;
+    static constexpr int16_t command_deadband_rpm = CTRL_SPD_CMD_DEADBAND_RPM;
+    static constexpr int32_t ref_ramp_rpm_per_s = CTRL_SPD_REF_RAMP_RPM_PER_S;
+    static constexpr int32_t ref_limit_rpm = CTRL_SPD_REF_LIMIT_RPM;
+    static constexpr int16_t iq_limit = CTRL_SPD_IQ_LIMIT;
+    static constexpr int16_t iq_slew_step = CTRL_SPD_IQ_SLEW_STEP;
+};
+
+struct EncoderConfig
+{
+    static constexpr int32_t counts_per_rev =
+        static_cast<int32_t>(MOT_SENSOR_CPR) * static_cast<int32_t>(MOT_SENSOR_POLE_PAIRS);
+    static constexpr int8_t direction = MOT_SENSOR_DIR;
+    static constexpr int16_t elec_zero = MOT_ELEC_ZERO;
+};
+
+static_assert(CurrentLoopConfig::pi_shift < 15U, "current PI shift too large");
+static_assert(SpeedLoopConfig::err_shift < 15U, "speed PI shift too large");
+static_assert(EncoderConfig::counts_per_rev > 0, "invalid encoder scale");
+static_assert((EncoderConfig::direction == 1) || (EncoderConfig::direction == -1),
+              "MOT_SENSOR_DIR must be 1 or -1");
 
 } // namespace cms32::motor
 ```
 
-注意：
+这一步不会删宏，只是让 C++ 新代码开始依赖 C++ config。等 C 文件迁移完，再把这些值变成真正源头。
+
+### Stage 4.3 motor_command_sanitizer.hpp
+
+只做纯值处理：
 
 ```text
-这个示例用于理解模板和状态封装
-真正替换现有 PI 前，要逐项对齐当前 C 算法的限幅和 anti-windup 行为
+从 volatile command 逐字段复制
+限幅
+rpm -> speed count/s
+返回普通 MotorControlCommand_t
 ```
 
-## Stage 6: Encoder/速度估算
+它不做：
 
-Encoder 适合用强类型，但不要让类型层太厚。
+```text
+不关中断
+不写 s_mc
+不读硬件
+不关 PWM
+```
 
-### encoder_estimator.hpp 完整示例
+这样它可以单独编译检查，也方便以后 Comm/Ozone/自动流程共用同一套命令规则。
+
+### Stage 4.4 motor_control_core.cpp
+
+替代 `motor_control_c.c` 参与构建，但只迁外壳：
+
+```text
+MotorControl_Init()
+MotorControl_ApplyCommand()
+MotorControl_RunSlowLoop()
+MotorControl_FastLoopFromAdcIrq()
+MotorControl_GetWatch()
+MotorControl_UpdateWatch()
+```
+
+仍然调用这些 C 快环函数：
+
+```text
+MotorControl_CurrentRunFastLoop()
+MotorControl_InternalUpdateEncoderAngle()
+MotorControl_InternalUpdateEncoderSpeed()
+MotorControl_InternalApplyVoltageVector()
+MotorControlVf_RunFastLoop()
+MotorControl_WatchFill()
+MotorControl_WatchCopyToVolatile()
+```
+
+临界区原则：
 
 ```cpp
-#pragma once
+const MotorControlCommand_t next_command = sanitizer.sanitize(*command);
 
-#include <stdint.h>
+{
+    const cms32::support::AdcIrqGuard guard;
+    (void)guard;
+    s_mc.enabled = static_cast<uint8_t>(next_command.enable != 0U);
+    s_mc.mode = to_underlying(next_mode);
+    s_mc.command = next_command;
+}
+```
 
-#include "low_pass.hpp"
-#include "units.hpp"
+`AdcIrqGuard` 只包共享状态写入。不要把限幅、串口解析、watch 填充、FOC 计算包进去。
 
-namespace cms32::motor {
+### Stage 4 验收
 
-template <int32_t CountsPerRev, int32_t SampleHz, uint8_t FilterShift>
-class SpeedEstimator {
+构建：
+
+```sh
+cmake --build --preset gcc-debug --target cms32foc
+```
+
+符号：
+
+```sh
+arm-none-eabi-nm -C build/gcc-debug/cms32foc | rg "MotorControl_|g_motor_"
+arm-none-eabi-nm -C build/gcc-debug/cms32foc | rg "__cxa|typeinfo|vtable|throw|exception"
+```
+
+第二条正常应无输出。
+
+行为：
+
+```text
+enable=0:
+  state idle，PWM safe。
+
+Speed mode:
+  current_ok 和 encoder_ok 正常时进入 closed loop。
+
+VF mode:
+  不依赖 encoder ready，但仍检查 current_ok。
+
+不支持 mode:
+  fault_reason = unsupported mode，PWM safe。
+```
+
+## Stage 5: FOC 纯数学小组件
+
+这一阶段才考虑 `foc_math.c`。
+
+适合迁：
+
+```text
+Q15 sin/cos 包装
+Angle16
+Clarke / Park / InvPark 的类型包装
+FixedPi
+SlewLimiter
+LowPassI32
+SVPWM duty 计算
+```
+
+不建议一开始迁：
+
+```text
+整个 Current fast loop
+整个 ADC IRQ 流程
+Board 寄存器访问
+```
+
+推荐方式是保留 C ABI 包装：
+
+```cpp
+extern "C" FocDq_t foc_park(FocAlphaBeta_t input, uint16_t theta)
+{
+    return cms32::motor::park(input, cms32::support::Angle16{theta});
+}
+```
+
+这样 C 文件还能继续调用旧函数，内部逐步变成 C++ 实现。
+
+## Stage 6: Encoder 和速度估算
+
+Encoder 适合用强类型，因为这里最容易混：
+
+```text
+MA600 raw
+电角度
+累计位置
+speed count/s
+rpm
+方向
+零点
+```
+
+建议拆成两层：
+
+```text
+AngleValidator:
+  只判断 raw 是否可信、是否要 hold/retry。
+
+SpeedEstimator:
+  只做 raw delta -> speed count/s -> filter。
+```
+
+示例方向：
+
+```cpp
+template <int32_t SampleHz, uint8_t FilterShift>
+class SpeedEstimator
+{
 public:
-    static_assert(CountsPerRev > 0, "CountsPerRev must be positive");
-    static_assert(SampleHz > 0, "SampleHz must be positive");
-
-    void reset(support::EncoderRaw raw) noexcept
-    {
-        prev_raw_ = raw;
-        speed_filter_.reset(0);
-        initialized_ = true;
-    }
-
-    support::SpeedCounts update(support::EncoderRaw raw) noexcept
-    {
-        if (!initialized_) {
-            reset(raw);
-            return support::SpeedCounts{0};
-        }
-
-        const int16_t delta =
-            static_cast<int16_t>(raw.value - prev_raw_.value);
-        prev_raw_ = raw;
-
-        const int32_t counts_per_second =
-            static_cast<int32_t>(delta) * SampleHz;
-        return support::SpeedCounts{speed_filter_.update(counts_per_second)};
-    }
+    support::SpeedCounts update(support::EncoderRaw raw) noexcept;
+    void reset(support::EncoderRaw raw) noexcept;
 
 private:
+    support::EncoderRaw prev_{0U};
+    support::LowPassI32<FilterShift> filter_{};
     bool initialized_{false};
-    support::EncoderRaw prev_raw_{0U};
-    support::LowPassI32<FilterShift> speed_filter_{};
 };
-
-} // namespace cms32::motor
 ```
 
-注意：
+不要把 SPI 读角也塞进 estimator。SPI 读取仍属于 Board/MA600 边界。
+
+## Stage 7: Board 层薄 C++ wrapper
+
+Board 层最后做。原因：
 
 ```text
-这个估算器只关心 raw delta 和滤波
-坏角过滤、MA600 重读、启动 blank 可以放在上层 validator
-不要把 SPI 读传感器也塞进估算器
+它直接碰寄存器
+它和 ADC/PWM/MA600 时序绑定
+改错会直接影响上板调试
 ```
 
-## 拆模块的最终建议
-
-当前最合理的 App 层结构是先保持简单：
+适合先包：
 
 ```text
+UART policy class
+GPIO pin enum
+PWM duty value object
+ADC sample window helper
+```
+
+不建议马上改：
+
+```text
+foc_curr.c 整体模板化
+foc_pwm.c 整体类化
+vendor driver 改 C++
+寄存器宏全部替换
+```
+
+Board C++ 的目标不是“看起来像 HAL”，而是：
+
+```text
+把容易混的参数类型化
+把编译期固定的外设实例用模板绑定
+把运行时代码保持和 C 一样直接
+```
+
+## 最终目标结构
+
+目标不是所有文件都 `.cpp`，而是边界稳定：
+
+```text
+Firmware/Support/
+  通用零开销工具，header-only 为主。
+
 Firmware/App/
-├── main.c
-├── screw_axis.h       C ABI，对 main/通信/Ozone 暴露
-└── screw_axis.cpp     轴级协调、回零状态机、少量 helper
+  ScrewAxis 等业务应用，可用 C++。
+
+Firmware/Comm/
+  串口协议和命令路由，C++。
+
+Firmware/MotorControl/Inc/
+  C ABI 和 Ozone 可见结构体。
+
+Firmware/MotorControl/Cpp/
+  MotorControl 类型、配置、慢环 shell、纯算法组件。
+
+Firmware/MotorControl/C/
+  尚未迁移的快环 C 文件，逐步减少。
+
+Firmware/Board/
+  底层寄存器和已验证外设链路，C 为主，薄 C++ wrapper 后置。
 ```
 
-我的建议是：
+最终 `#define` 退场顺序：
 
 ```text
-先把 HomeState enum class 和 constexpr 写进 screw_axis.cpp
-先用 support::clamp 替掉本地 clamp_s16/clamp_u16
-先把重复写 command/status 的代码收成小 helper
-暂时不要拆目录
+1. 新 C++ 代码不再直接使用业务宏，而用 enum class / constexpr config。
+2. C 文件迁移到 C++ 后，删除对应业务宏。
+3. vendor/CMSIS/寄存器宏保留。
 ```
 
-等状态机继续长大，再考虑：
+## 每个阶段都要做的检查
+
+每次改完至少跑：
+
+```sh
+cmake --build --preset gcc-debug --target cms32foc
+```
+
+如果改了 C++ 构建路径，再查：
+
+```sh
+arm-none-eabi-nm -C build/gcc-debug/cms32foc | rg "__cxa|__gxx|typeinfo|vtable|throw|exception|operator new|operator delete"
+```
+
+期望无输出。
+
+如果改了命令、状态或 watch，再上板看：
 
 ```text
-ScrewHomeController      回零状态机确实独立变大后再拆
-ScrewPositionTracker     需要软限位/位置换算后再拆
-CommandRouter            串口、Ozone、自动流程开始抢命令后再拆
+g_motor_cmd 是否还能写
+g_motor_watch 是否还能更新
+state / control_mode / fault_reason 数字是否保持旧语义
+fast_loop_count 是否继续增长
+PWM safe 行为是否不变
 ```
 
-判断一个模块该不该拉出来，用这三句话：
+混编的底线是：
 
 ```text
-它能不能用一个清楚的名词命名？
-它有没有自己独立的状态？
-它能不能只通过少量输入/输出和外界交互？
+先保持行为，再提高类型安全。
 ```
-
-三个都是“是”，就可以拉出来。否则先留在原文件里，别为了漂亮目录制造迷宫。

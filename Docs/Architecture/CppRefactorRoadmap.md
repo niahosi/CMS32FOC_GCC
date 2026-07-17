@@ -208,7 +208,9 @@ MinSizeRel Flash 不异常增长
 
 ## 第三阶段：串口 Comm 模块
 
-串口还没调试，建议从一开始就用 C++ 写，但保持硬件 ISR 很薄。
+Board 层 UART bring-up 先保持 C：寄存器初始化、P06/P07 pinmux、RX ring buffer
+和 `UART0_IRQHandler()` 都放在 `Firmware/Board/Src/board_uart.c`。后续真正的 Comm
+协议层再用 C++ 写 parser/router，保持硬件 ISR 很薄。
 
 建议目录：
 
@@ -296,7 +298,7 @@ ISR 实时性可控
 后续协议扩展不污染 MotorControl 快环
 ```
 
-## 第四阶段：MotorControl 慢环外壳
+## 第四阶段：MotorControl 核心调度层
 
 当前文件：
 
@@ -304,10 +306,10 @@ ISR 实时性可控
 Firmware/MotorControl/C/motor_control_c.c
 ```
 
-先不要动快环，先把慢环外壳迁成 C++：
+先不要动快环，先把核心调度层迁成 C++：
 
 ```text
-Firmware/MotorControl/Cpp/motor_control_shell.cpp
+Firmware/MotorControl/Cpp/motor_control_core.cpp
 ```
 
 仍然导出同名 C ABI：
@@ -402,7 +404,7 @@ RawAngle
 SpeedCounts
 EncoderSampleValidator<MaxStepRaw>
 SpeedEstimator<SampleHz, FilterShift>
-if constexpr 选择 RawDiff / Ma600SpeedFrame
+if constexpr 选择不同 raw diff 滤波策略
 ```
 
 建议保留：
@@ -419,7 +421,7 @@ MotorControl_InternalUpdateEncoderSpeed()
 ```text
 角度单位和速度单位清楚
 坏角过滤参数可用 static_assert 检查
-MA600 speed frame 和 raw diff 的编译期选择更干净
+raw diff 速度估算和滤波参数的编译期检查更干净
 ```
 
 ## 第七阶段：Board 层
@@ -480,7 +482,7 @@ cms32m6510_flash.ld
 Step 1: CMake 增加 cms32_cpp_options 和 Firmware/Support header-only
 Step 2: ScrewAxis 改 C++，保持 C ABI
 Step 3: 新建 Comm 串口模块，固定 ring buffer + parser
-Step 4: MotorControl 慢环外壳改 C++，快环仍 C
+Step 4: MotorControl 核心调度层改 C++，快环仍 C
 Step 5: PI/斜坡/滤波小组件模板化
 Step 6: Encoder/速度估算内部 C++ 化
 Step 7: 最后评估 Current fast loop 是否值得迁移
