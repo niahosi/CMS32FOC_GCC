@@ -1,4 +1,4 @@
-# Modern Cpp Adoption Guide
+# 现代 C++ 采用指南
 
 本文说明如何把现代 C++ 特性逐步写进当前固件，同时保持嵌入式项目需要的确定性、零动态内存、可读性和可控体积。参考方向来自用户给出的 Awesome Modern C++ embedded 教程：
 

@@ -213,7 +213,7 @@ target_link_libraries(cms32_foc_algorithm PUBLIC
 )
 
 set(CMS32_MOTOR_CONTROL_C_SOURCES
-    ${CMS32_MOTOR_C_DIR}/motor_control_c.c
+    ${CMS32_MOTOR_CPP_DIR}/motor_control_core.cpp
     ${CMS32_MOTOR_C_DIR}/motor_control_current.c
     ${CMS32_MOTOR_C_DIR}/motor_control_encoder.c
     ${CMS32_MOTOR_C_DIR}/motor_control_output.c
@@ -226,11 +226,13 @@ add_library(cms32_motor_control_c STATIC
 )
 target_include_directories(cms32_motor_control_c PUBLIC
     ${CMS32_MOTOR_C_DIR}
+    ${CMS32_MOTOR_CPP_DIR}
     ${CMS32_MOTOR_INC_DIR}
 )
 target_link_libraries(cms32_motor_control_c PUBLIC
     cms32_bsp
     cms32_foc_algorithm
+    cms32_support_cpp
 )
 
 # -----------------------------------------------------------------------------

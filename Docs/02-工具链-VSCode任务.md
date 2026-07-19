@@ -1,4 +1,4 @@
-# VS Code Tasks
+# VS Code 任务
 
 This project keeps the VS Code task list short. Use `Terminal -> Run Task...` for all tasks.
 

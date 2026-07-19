@@ -48,14 +48,10 @@ wsl --import CMS32FOC C:\WSL\CMS32FOC .\cms32foc-toolchain-ubuntu24.04-wsl-rootf
 
 Useful docs:
 
-- `Docs/Architecture/CurrentProgramBuildAndReadMap.md`
-- `Docs/Architecture/ModernCppAdoptionGuide.md`
-- `Docs/Architecture/CppRefactorRoadmap.md`
-- `Docs/Architecture/CppStageImplementationGuide.md`
-- `Docs/Architecture/SupportCppHandsOnGuide.md`
-- `Docs/VSCode-Tasks.md`
-- `Docs/Toolchain-Setup-zh.md`
-- `Docs/Hardware/Pins.md`
+- `Docs/00-文档索引.md`
+- `Docs/Architecture/01-当前程序-构建与阅读地图.md`
+- `Docs/Architecture/10-Cpp迁移-路线图.md`
+- `Docs/01-工具链-工具链使用说明.md`
 
 Reference material copied from the original Keil workspace and hardware
 packages lives under `Reference/`. It is for reading and staged migration only;

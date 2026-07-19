@@ -1,4 +1,4 @@
-# C/C++ Hybrid Stage Implementation Guide
+# C/C++ 混编分阶段实践指南
 
 本文是当前工程的 C/C++ 混编分阶段实践文档。它不再把目标写成“把所有 C 文件改成 C++”，而是按嵌入式 Modern C++ 的思路，把 C 和 C++ 各自放在最适合的位置。
 
@@ -11,11 +11,17 @@ https://awesome-embedded-learning-studio.github.io/Tutorial_AwesomeModernCPP/vol
 本文和其它文档的关系：
 
 ```text
-CppRefactorRoadmap.md                  讲长期路线和阶段顺序
-CppStageImplementationGuide.md         讲当前阶段怎么混编、边界怎么落
-SupportCppHandsOnGuide.md              专门讲 Firmware/Support/*.hpp
-MotorControlCoreCppHandsOnGuide.md    专门讲第四阶段核心调度层怎么手写
-CurrentProgramTheoryAndParameterGuide.md 讲当前程序和参数数学
+10-Cpp迁移-路线图.md                  讲长期路线和阶段顺序
+11-Cpp迁移-分阶段实践指南.md         讲当前阶段怎么混编、边界怎么落
+12-Cpp迁移-Support层动手指南.md              专门讲 Firmware/Support/*.hpp
+13-Cpp迁移-MotorControl核心调度层动手指南.md    专门讲第四阶段核心调度层怎么手写
+14-Cpp迁移-MotorControl当前状态教学.md  按当前 checkout 状态讲下一步怎么手写
+15-Cpp迁移-MotorControl数学小组件动手指南.md     专门讲 Stage 5 数学小组件怎么手写
+16-Cpp迁移-FOC坐标变换动手指南.md         专门讲 FOC transform 类型包装
+17-Cpp迁移-编码器与速度估算动手指南.md         专门讲 Stage 6 编码器和速度估算
+18-Cpp迁移-串口通信动手指南.md                 专门讲后续串口协议和命令路由
+19-Cpp迁移-Board薄封装动手指南.md     专门讲 Board 层薄 C++ wrapper
+02-当前程序-理论与参数指南.md 讲当前程序和参数数学
 ```
 
 ## 总方向：不是全 C++，是混编
@@ -529,7 +535,7 @@ constexpr:
   正常使用时通常不会占 RAM。
 ```
 
-这和 `SupportCppHandsOnGuide.md` 里的思路一致：
+这和 `12-Cpp迁移-Support层动手指南.md` 里的思路一致：
 
 ```text
 能在编译期确定的规则，不放到运行时判断。

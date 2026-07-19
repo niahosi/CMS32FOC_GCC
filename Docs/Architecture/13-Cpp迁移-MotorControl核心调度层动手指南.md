@@ -1,8 +1,8 @@
-# MotorControl Core Cpp Hands-On Guide
+# MotorControl 核心调度层 C++ 动手指南
 
 本文是第四阶段 `MotorControl` 核心调度层 C++ 化的动手文档。
 
-它的写法跟 `SupportCppHandsOnGuide.md` 一样：先讲为什么，再给完整程序。你可以照着一个文件一个文件手写，写完一步就编译一次。
+它的写法跟 `12-Cpp迁移-Support层动手指南.md` 一样：先讲为什么，再给完整程序。你可以照着一个文件一个文件手写，写完一步就编译一次。
 
 这一阶段只迁移外壳：
 

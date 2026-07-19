@@ -1,4 +1,4 @@
-# Support Cpp Hands-On Guide
+# Support 层 C++ 动手指南
 
 本文不是 API 手册，而是给你自己动手写 `Firmware/Support/*.hpp` 的练习路线。目标是理解这些 C++ 组件为什么是零开销、为什么适合嵌入式，以及怎么验证它们没有偷偷引入堆、异常或奇怪运行时。
 

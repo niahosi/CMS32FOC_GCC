@@ -240,14 +240,8 @@ extern "C" void MotorControl_Init(void)
     s_mc.speed_deadband_count = 0U;
     s_mc.current_loop_div = 0U;
     s_mc.speed_sample_div = 0U;
-    s_mc.current_command = MCCurrentCommand_t{0,
-                                                        0,
-                                                        CTRL_SPD_IQ_LIMIT,
-                                                        CTRL_CUR_KP,
-                                                        CTRL_CUR_KI,
-                                                        CTRL_CUR_V_LIMIT,
-                                                        0,
-                                                        0};
+    s_mc.current_command = MCCurrentCommand_t{
+        0, 0, CTRL_SPD_IQ_LIMIT, CTRL_CUR_KP, CTRL_CUR_KI, CTRL_CUR_V_LIMIT, 0, 0};
     s_mc.speed_command = MCSpeedCommand_t{0, CTRL_SPD_KP, CTRL_SPD_KI, CTRL_SPD_IQ_LIMIT};
     s_mc.vf_command = MCVfCommand_t{OL_SPEED_REF, OL_VF_VOLTAGE, OL_TIMEOUT_MS};
 
@@ -316,4 +310,88 @@ extern "C" void MotorControl_ApplyCommand(const volatile MotorControlCommand_t *
 
     apply_vf_voltage_mirror(next_command);
     enter_idle_if_disabled();
+}
+
+extern "C" void MotorControl_RunSlowLoop(void)
+{
+    const ControlMode mode = current_mode();
+    refresh_slow_checks(mode);
+
+    if (s_mc.enabled == 0U)
+    {
+        s_mc.slow_loop_count++;
+        return;
+    }
+
+    // 有冻结的模式，尝试兼容被冻结不编译的程序
+    if (is_supported_run_mode(mode))
+    {
+        if (s_mc.check.ready_closed_loop != 0U)
+        {
+            enter_ready_state(mode);
+        }
+        else
+        {
+            enter_fault_state(fault_for_not_ready(mode));
+        }
+    }
+    else
+    {
+        enter_fault_state(ControlFault::UnsupportedMode);
+    }
+
+    s_mc.slow_loop_count++;
+}
+
+extern "C" uint8_t MotorControl_FastLoopFromAdcIrq(void)
+{
+    const uint8_t sample_ready = bsp_adc_irq();
+    if (sample_ready == 0U)
+    {
+        return 0U;
+    }
+
+    // 采样成功，但控制层当前不允许输出快环。
+    if ((s_mc.enabled == 0U) || (current_state() != ControlState::ClosedLoop))
+    {
+        return 1U;
+    }
+    switch (current_mode())
+    {
+    case ControlMode::VfOpenLoop:
+        MotorControlVf_RunFastLoop(&s_mc);
+        break;
+    case ControlMode::Speed:
+        MotorControl_CurrentRunFastLoop(&s_mc, 1U);
+        break;
+    case ControlMode::Current:
+        MotorControl_CurrentRunFastLoop(&s_mc, 0U);
+        break;
+    default:
+        break;
+    }
+
+    return 1U;
+}
+
+extern "C" void MotorControl_GetWatch(MotorControlWatch_t *out)
+{
+    if (out == nullptr)
+    {
+        return;
+    }
+
+    MotorControl_WatchFill(&s_mc, out);
+}
+
+extern "C" void MotorControl_UpdateWatch(volatile MotorControlWatch_t *out)
+{
+    if (out == nullptr)
+    {
+        return;
+    }
+
+    MotorControlWatch_t snapshot;
+    MotorControl_WatchFill(&s_mc, &snapshot);
+    MotorControl_WatchCopyToVolatile(out, &snapshot);
 }

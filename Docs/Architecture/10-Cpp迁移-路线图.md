@@ -1,4 +1,4 @@
-# Cpp Refactor Roadmap
+# C++ 迁移路线图
 
 本文给当前工程的 C++ 重写顺序和模块落点。参考方向是 Awesome Modern C++ embedded 教程：
 
@@ -9,7 +9,23 @@ https://awesome-embedded-learning-studio.github.io/Tutorial_AwesomeModernCPP/vol
 如果要看每个阶段“怎么拆、完整 `.hpp/.cpp` 怎么写、代码里每个 C++ 点是什么意思”，读：
 
 ```text
-Docs/Architecture/CppStageImplementationGuide.md
+Docs/Architecture/11-Cpp迁移-分阶段实践指南.md
+```
+
+如果要按当前 checkout 的实际状态继续手写 `MotorControl` C++ shell，读：
+
+```text
+Docs/Architecture/14-Cpp迁移-MotorControl当前状态教学.md
+```
+
+后续阶段的动手教学文档：
+
+```text
+Docs/Architecture/15-Cpp迁移-MotorControl数学小组件动手指南.md
+Docs/Architecture/16-Cpp迁移-FOC坐标变换动手指南.md
+Docs/Architecture/17-Cpp迁移-编码器与速度估算动手指南.md
+Docs/Architecture/18-Cpp迁移-串口通信动手指南.md
+Docs/Architecture/19-Cpp迁移-Board薄封装动手指南.md
 ```
 
 采用的核心原则：
