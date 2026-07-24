@@ -24,11 +24,12 @@ Diagnostics:
       - readability-const-return-type
       - modernize-use-nullptr
       - modernize-use-override
-      - modernize-use-using
       - misc-*
     Remove:
       - bugprone-easily-swappable-parameters
+      - bugprone-dynamic-static-initializers
       - readability-magic-numbers
+      - modernize-use-using
     CheckOptions:
       modernize-use-auto.MinTypeNameLength: "5"
 

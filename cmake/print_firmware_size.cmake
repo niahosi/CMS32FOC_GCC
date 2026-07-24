@@ -1,3 +1,15 @@
+# Post-build size report script.
+#
+# This file is executed with `cmake -P` from cms32_configure_firmware().
+# Inputs are passed with -D, so keep it script-style and do not make it depend
+# on targets from the main CMake project.
+
+function(require_script_variable variable_name)
+    if(NOT DEFINED ${variable_name})
+        message(FATAL_ERROR "${variable_name} is not set")
+    endif()
+endfunction()
+
 function(format_kib out_var bytes)
     math(EXPR scaled "(${bytes} * 100 + 512) / 1024")
     math(EXPR whole "${scaled} / 100")
@@ -57,12 +69,13 @@ else()
     set(CMS32_COLOR_CYAN "${CMS32_ESC}[1;36m")
 endif()
 
-if(NOT DEFINED SIZE_TOOL)
-    message(FATAL_ERROR "SIZE_TOOL is not set")
-endif()
-if(NOT DEFINED ELF_FILE)
-    message(FATAL_ERROR "ELF_FILE is not set")
-endif()
+require_script_variable(SIZE_TOOL)
+require_script_variable(ELF_FILE)
+require_script_variable(TARGET_NAME)
+require_script_variable(FLASH_BYTES)
+require_script_variable(RAM_BYTES)
+require_script_variable(HEAP_BYTES)
+require_script_variable(STACK_BYTES)
 
 execute_process(
     COMMAND ${SIZE_TOOL} ${ELF_FILE}

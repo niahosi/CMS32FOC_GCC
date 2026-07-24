@@ -6,6 +6,7 @@
 #include "foc_bsp.h"
 #include "BoardConfig.h"
 #include "TuneConfig.h"
+#include "board_profile.h"
 #include "foc_curr.h"
 #include "foc_ma600.h"
 #include "foc_pwm.h"
@@ -22,6 +23,7 @@ static void gpio_init(void);
 void bsp_init(void)
 {
     clock_init();
+    BoardProfile_Init();
     gpio_init();
     ma600_init();
     bsp_update_angle();

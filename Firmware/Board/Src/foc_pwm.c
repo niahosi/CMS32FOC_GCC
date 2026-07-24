@@ -212,6 +212,12 @@ uint8_t pwm_enable(uint8_t enable)
 {
     if (enable != 0)
     {
+        /* 已经运行时不重复写 brake、输出 mask 和驱动使能寄存器。 */
+        if ((s_pwm.out != 0U) && (s_pwm.brake == 0U))
+        {
+            return 1U;
+        }
+
         /*
          * 重新输出前必须清除 mask/brake 状态，再打开 EPWM 输出和驱动使能。
          * 调用者必须已经完成零漂、采样同步和状态机安全检查。

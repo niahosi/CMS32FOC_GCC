@@ -5,7 +5,7 @@ Standard: c++17
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
-ColumnLimit: 100
+ColumnLimit: 88
 
 BreakBeforeBraces: Custom
 BraceWrapping:
@@ -50,6 +50,7 @@ IndentAccessModifiers: false
 AlignConsecutiveAssignments: false
 AlignConsecutiveDeclarations: false
 AlignAfterOpenBracket: Align
+AllowAllArgumentsOnNextLine: false
 BinPackArguments: false
 BinPackParameters: false
 

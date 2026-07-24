@@ -34,23 +34,22 @@ public:
 
     constexpr T update(T target) noexcept
     {
-        value_ = slew_step<T>(value_, target, Step);
-        return value_;
+        value = slew_step<T>(value, target, Step);
+        return value;
     }
 
-    constexpr T reset(T value = static_cast<T>(0)) noexcept
+    constexpr T reset(T next_value = static_cast<T>(0)) noexcept
     {
-        value_ = value;
-        return value_;
+        value = next_value;
+        return value;
     }
 
-    constexpr T value() const noexcept
+    constexpr T get() const noexcept
     {
-        return value_;
+        return value;
     }
 
-private:
-    T value_{0};
+    T value{0};
 };
 
 } // namespace cms32::support

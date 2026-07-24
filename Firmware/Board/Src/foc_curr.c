@@ -1,4 +1,8 @@
 #include "foc_curr.h"
+#include "BoardConfig.h"
+#include "CMS32M6510.h"
+#include "TuneConfig.h"
+#include "common.h"
 #include "foc_pwm.h"
 #include "adc.h"
 #include "adcldo.h"
@@ -146,31 +150,36 @@ static void sync_reset(void);
 static void state_clear(void);
 static void trigger_update(void);
 static void trigger_pair(uint8_t pair);
-static uint8_t pair_cfg(uint8_t pair, CurrPairCfg* cfg);
+static uint8_t pair_cfg(uint8_t pair, CurrPairCfg *cfg);
 static uint8_t high_vf_single_active(void);
 static void window_select(void);
-static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width,
-                                uint8_t* valid_mask, uint8_t* recon_mode);
-static void sort_duty_desc(CurrDutyItem* a, CurrDutyItem* b, CurrDutyItem* c);
+static uint8_t ti_window_select(uint8_t *pair,
+                                uint16_t *center,
+                                uint16_t *width,
+                                uint8_t *valid_mask,
+                                uint8_t *recon_mode);
+static void sort_duty_desc(CurrDutyItem *a, CurrDutyItem *b, CurrDutyItem *c);
 static uint8_t pair_from_phases(uint8_t a, uint8_t b);
 static uint8_t valid_bit(uint8_t phase);
 static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t center_bias);
 static void window_hold(void);
-static void sample_pair(Curr3* sample);
+static void sample_pair(Curr3 *sample);
 static void sample_resolve(void);
-static uint8_t pair_sample_in_range(uint8_t pair, const Curr3* sample);
-static uint8_t physical_in_hard_range(const Curr3* physical);
+static uint8_t pair_sample_in_range(uint8_t pair, const Curr3 *sample);
+static uint8_t physical_in_hard_range(const Curr3 *physical);
 static uint8_t current_in_hard_range(int16_t value);
-static void reconstruct(uint8_t pair, const Curr3* sample, Curr3* physical);
-static void apply_phys(const Curr3* physical);
-static void map_logic(const Curr3* physical);
+static void reconstruct(uint8_t pair, const Curr3 *sample, Curr3 *physical);
+static void apply_phys(const Curr3 *physical);
+static void map_logic(const Curr3 *physical);
 static int16_t map_current_sign(int16_t value);
 static void filter_clear(void);
-static void filter_update(const Curr3* physical, uint8_t valid_mask);
+static void filter_update(const Curr3 *physical, uint8_t valid_mask);
 static int16_t filter_value(int32_t value);
 static uint16_t clamp_tick(uint16_t tick);
 static uint16_t clamp_sample_tick(uint16_t tick);
+#if (CS_MULTI_EN != 0U)
 static uint16_t abs_diff_i16(int16_t a, int16_t b);
+#endif
 static uint16_t cnt_to_adc(int16_t cnt, uint16_t offset);
 
 /** @brief 初始化电流采样硬件和内部缓存。 */
@@ -220,6 +229,7 @@ void curr_sync_init(void)
     ADC_ConfigRunMode(ADC_MODE_HIGH, ADC_CONVERT_CONTINUOUS, ADC_CLK_DIV_1, 25);
     trigger_update();
     irq_clear();
+    NVIC_SetPriority(ADC_IRQn, BOARD_UART_ADC_IRQ_PRIORITY);
     NVIC_EnableIRQ(ADC_IRQn);
     ADC_Go();
 }
@@ -305,14 +315,38 @@ uint8_t curr_irq(void)
     return 1U;
 }
 
-int16_t curr_u(void) { return s_logic.u; }
-int16_t curr_v(void) { return s_logic.v; }
-int16_t curr_w(void) { return s_logic.w; }
-int16_t curr_sum(void) { return s_logic.sum; }
-uint16_t curr_raw_adc_u(void) { return s_raw.u; }
-uint16_t curr_raw_adc_v(void) { return s_raw.v; }
-uint16_t curr_raw_adc_w(void) { return s_raw.w; }
-uint32_t curr_sync_count(void) { return s_sync.count; }
+int16_t curr_u(void)
+{
+    return s_logic.u;
+}
+int16_t curr_v(void)
+{
+    return s_logic.v;
+}
+int16_t curr_w(void)
+{
+    return s_logic.w;
+}
+int16_t curr_sum(void)
+{
+    return s_logic.sum;
+}
+uint16_t curr_raw_adc_u(void)
+{
+    return s_raw.u;
+}
+uint16_t curr_raw_adc_v(void)
+{
+    return s_raw.v;
+}
+uint16_t curr_raw_adc_w(void)
+{
+    return s_raw.w;
+}
+uint32_t curr_sync_count(void)
+{
+    return s_sync.count;
+}
 
 /** @brief 配置三相电流 ADC/PGA 相关引脚为模拟输入。 */
 static void pins_init(void)
@@ -489,7 +523,7 @@ static uint8_t high_vf_single_active(void)
 }
 
 /** @brief 将逻辑采样 pair 映射到 ADC 通道掩码。 */
-static uint8_t pair_cfg(uint8_t pair, CurrPairCfg* cfg)
+static uint8_t pair_cfg(uint8_t pair, CurrPairCfg *cfg)
 {
     if (cfg == 0)
     {
@@ -498,30 +532,30 @@ static uint8_t pair_cfg(uint8_t pair, CurrPairCfg* cfg)
 
     switch (pair)
     {
-        case CURR_PAIR_ALL:
-            cfg->channel_mask = ADC_CH_0_MSK | ADC_CH_2_MSK | ADC_CH_3_MSK;
-            cfg->last_channel = ADC_CH_3;
-            cfg->last_channel_mask = ADC_CH_3_MSK;
-            return 1U;
+    case CURR_PAIR_ALL:
+        cfg->channel_mask = ADC_CH_0_MSK | ADC_CH_2_MSK | ADC_CH_3_MSK;
+        cfg->last_channel = ADC_CH_3;
+        cfg->last_channel_mask = ADC_CH_3_MSK;
+        return 1U;
 
-        case CS_PAIR_UV:
-            cfg->channel_mask = ADC_CH_0_MSK | ADC_CH_2_MSK;
-            cfg->last_channel = ADC_CH_2;
-            cfg->last_channel_mask = ADC_CH_2_MSK;
-            return 1U;
+    case CS_PAIR_UV:
+        cfg->channel_mask = ADC_CH_0_MSK | ADC_CH_2_MSK;
+        cfg->last_channel = ADC_CH_2;
+        cfg->last_channel_mask = ADC_CH_2_MSK;
+        return 1U;
 
-        case CS_PAIR_UW:
-            cfg->channel_mask = ADC_CH_0_MSK | ADC_CH_3_MSK;
-            cfg->last_channel = ADC_CH_3;
-            cfg->last_channel_mask = ADC_CH_3_MSK;
-            return 1U;
+    case CS_PAIR_UW:
+        cfg->channel_mask = ADC_CH_0_MSK | ADC_CH_3_MSK;
+        cfg->last_channel = ADC_CH_3;
+        cfg->last_channel_mask = ADC_CH_3_MSK;
+        return 1U;
 
-        case CS_PAIR_VW:
-        default:
-            cfg->channel_mask = ADC_CH_2_MSK | ADC_CH_3_MSK;
-            cfg->last_channel = ADC_CH_3;
-            cfg->last_channel_mask = ADC_CH_3_MSK;
-            return 1U;
+    case CS_PAIR_VW:
+    default:
+        cfg->channel_mask = ADC_CH_2_MSK | ADC_CH_3_MSK;
+        cfg->last_channel = ADC_CH_3;
+        cfg->last_channel_mask = ADC_CH_3_MSK;
+        return 1U;
     }
 }
 
@@ -546,8 +580,11 @@ static void window_select(void)
 }
 
 /** @brief 按 T1/T2/T3 窗口宽度选择可采样 pair 和重构模式。 */
-static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width,
-                                uint8_t* valid_mask, uint8_t* recon_mode)
+static uint8_t ti_window_select(uint8_t *pair,
+                                uint16_t *center,
+                                uint16_t *width,
+                                uint8_t *valid_mask,
+                                uint8_t *recon_mode)
 {
     volatile uint16_t duty_u;
     volatile uint16_t duty_v;
@@ -578,8 +615,9 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
     t2 = (uint16_t)(midp.duty - minp.duty);
     t3 = (uint16_t)(maxp.duty - midp.duty);
 
-    reserve = ((CS_MULTI_EN != 0U) && (high_vf_single_active() == 0U)) ?
-              (uint16_t)CS_MULTI_DELTA_TICK : 0U;
+    reserve = ((CS_MULTI_EN != 0U) && (high_vf_single_active() == 0U))
+                  ? (uint16_t)CS_MULTI_DELTA_TICK
+                  : 0U;
     open_delay = (uint16_t)(CS_OPEN_SETTLE_TICK + reserve);
     min_width = (uint16_t)(open_delay + (uint16_t)CS_TAIL_MARGIN_TICK + reserve);
     case1_width = min_width;
@@ -635,7 +673,7 @@ static uint8_t ti_window_select(uint8_t* pair, uint16_t* center, uint16_t* width
 }
 
 /** @brief 将三相 duty 从大到小排序，用于计算 T1/T2/T3。 */
-static void sort_duty_desc(CurrDutyItem* a, CurrDutyItem* b, CurrDutyItem* c)
+static void sort_duty_desc(CurrDutyItem *a, CurrDutyItem *b, CurrDutyItem *c)
 {
     CurrDutyItem t;
 
@@ -685,17 +723,17 @@ static uint8_t valid_bit(uint8_t phase)
 {
     switch (phase)
     {
-        case CURR_PHASE_U:
-            return CURR_VALID_U;
+    case CURR_PHASE_U:
+        return CURR_VALID_U;
 
-        case CURR_PHASE_V:
-            return CURR_VALID_V;
+    case CURR_PHASE_V:
+        return CURR_VALID_V;
 
-        case CURR_PHASE_W:
-            return CURR_VALID_W;
+    case CURR_PHASE_W:
+        return CURR_VALID_W;
 
-        default:
-            return 0U;
+    default:
+        return 0U;
     }
 }
 
@@ -733,8 +771,7 @@ static void window_apply_pair(uint8_t pair, uint16_t common_width, int16_t cente
     }
     reconfigure = (uint8_t)((s_win.pair != pair) || (s_win.center != center) ||
                             (s_win.tick_a != tick_a) || (s_win.tick_b != tick_b) ||
-                            (s_win.single_point != single_point) ||
-                            (s_win.hold != 0U));
+                            (s_win.single_point != single_point) || (s_win.hold != 0U));
 
     if ((s_win.pair != pair) && (s_win.pair != CURR_PAIR_NONE))
     {
@@ -785,7 +822,7 @@ static void window_hold(void)
 }
 
 /** @brief 按当前 pair 从 ADC 结果中取样并扣除零漂。 */
-static void sample_pair(Curr3* sample)
+static void sample_pair(Curr3 *sample)
 {
     int16_t first = 0;
     int16_t second = 0;
@@ -796,35 +833,35 @@ static void sample_pair(Curr3* sample)
 
     switch (s_win.pair)
     {
-        case CURR_PAIR_ALL:
-            sample->u = (int16_t)((int16_t)adc_result12(ADC_CH_0) - (int16_t)s_zero.u);
-            sample->v = (int16_t)((int16_t)adc_result12(ADC_CH_2) - (int16_t)s_zero.v);
-            sample->w = (int16_t)((int16_t)adc_result12(ADC_CH_3) - (int16_t)s_zero.w);
-            first = sample->u;
-            second = sample->v;
-            break;
+    case CURR_PAIR_ALL:
+        sample->u = (int16_t)((int16_t)adc_result12(ADC_CH_0) - (int16_t)s_zero.u);
+        sample->v = (int16_t)((int16_t)adc_result12(ADC_CH_2) - (int16_t)s_zero.v);
+        sample->w = (int16_t)((int16_t)adc_result12(ADC_CH_3) - (int16_t)s_zero.w);
+        first = sample->u;
+        second = sample->v;
+        break;
 
-        case CS_PAIR_UV:
-            sample->u = (int16_t)((int16_t)adc_result12(ADC_CH_0) - (int16_t)s_zero.u);
-            sample->v = (int16_t)((int16_t)adc_result12(ADC_CH_2) - (int16_t)s_zero.v);
-            first = sample->u;
-            second = sample->v;
-            break;
+    case CS_PAIR_UV:
+        sample->u = (int16_t)((int16_t)adc_result12(ADC_CH_0) - (int16_t)s_zero.u);
+        sample->v = (int16_t)((int16_t)adc_result12(ADC_CH_2) - (int16_t)s_zero.v);
+        first = sample->u;
+        second = sample->v;
+        break;
 
-        case CS_PAIR_UW:
-            sample->u = (int16_t)((int16_t)adc_result12(ADC_CH_0) - (int16_t)s_zero.u);
-            sample->w = (int16_t)((int16_t)adc_result12(ADC_CH_3) - (int16_t)s_zero.w);
-            first = sample->u;
-            second = sample->w;
-            break;
+    case CS_PAIR_UW:
+        sample->u = (int16_t)((int16_t)adc_result12(ADC_CH_0) - (int16_t)s_zero.u);
+        sample->w = (int16_t)((int16_t)adc_result12(ADC_CH_3) - (int16_t)s_zero.w);
+        first = sample->u;
+        second = sample->w;
+        break;
 
-        case CS_PAIR_VW:
-        default:
-            sample->v = (int16_t)((int16_t)adc_result12(ADC_CH_2) - (int16_t)s_zero.v);
-            sample->w = (int16_t)((int16_t)adc_result12(ADC_CH_3) - (int16_t)s_zero.w);
-            first = sample->v;
-            second = sample->w;
-            break;
+    case CS_PAIR_VW:
+    default:
+        sample->v = (int16_t)((int16_t)adc_result12(ADC_CH_2) - (int16_t)s_zero.v);
+        sample->w = (int16_t)((int16_t)adc_result12(ADC_CH_3) - (int16_t)s_zero.w);
+        first = sample->v;
+        second = sample->w;
+        break;
     }
 
     if (s_delta.stage == 0U)
@@ -893,7 +930,7 @@ static void sample_resolve(void)
 }
 
 /** @brief 检查当前 pair 的已采样相是否在硬限范围内。 */
-static uint8_t pair_sample_in_range(uint8_t pair, const Curr3* sample)
+static uint8_t pair_sample_in_range(uint8_t pair, const Curr3 *sample)
 {
     if (s_win.recon_mode == CURR_RECON_FILTER)
     {
@@ -915,28 +952,28 @@ static uint8_t pair_sample_in_range(uint8_t pair, const Curr3* sample)
 
     switch (pair)
     {
-        case CURR_PAIR_ALL:
-            return (uint8_t)(current_in_hard_range(sample->u) &&
-                             current_in_hard_range(sample->v) &&
-                             current_in_hard_range(sample->w));
+    case CURR_PAIR_ALL:
+        return (uint8_t)(current_in_hard_range(sample->u) &&
+                         current_in_hard_range(sample->v) &&
+                         current_in_hard_range(sample->w));
 
-        case CS_PAIR_UV:
-            return (uint8_t)(current_in_hard_range(sample->u) &&
-                             current_in_hard_range(sample->v));
+    case CS_PAIR_UV:
+        return (uint8_t)(current_in_hard_range(sample->u) &&
+                         current_in_hard_range(sample->v));
 
-        case CS_PAIR_UW:
-            return (uint8_t)(current_in_hard_range(sample->u) &&
-                             current_in_hard_range(sample->w));
+    case CS_PAIR_UW:
+        return (uint8_t)(current_in_hard_range(sample->u) &&
+                         current_in_hard_range(sample->w));
 
-        case CS_PAIR_VW:
-        default:
-            return (uint8_t)(current_in_hard_range(sample->v) &&
-                             current_in_hard_range(sample->w));
+    case CS_PAIR_VW:
+    default:
+        return (uint8_t)(current_in_hard_range(sample->v) &&
+                         current_in_hard_range(sample->w));
     }
 }
 
 /** @brief 检查重构后的三相物理电流是否在硬限范围内。 */
-static uint8_t physical_in_hard_range(const Curr3* physical)
+static uint8_t physical_in_hard_range(const Curr3 *physical)
 {
     return (uint8_t)(current_in_hard_range(physical->u) &&
                      current_in_hard_range(physical->v) &&
@@ -951,7 +988,7 @@ static uint8_t current_in_hard_range(int16_t value)
 }
 
 /** @brief 根据采样 pair 用 KCL 或滤波保持重构三相物理电流。 */
-static void reconstruct(uint8_t pair, const Curr3* sample, Curr3* physical)
+static void reconstruct(uint8_t pair, const Curr3 *sample, Curr3 *physical)
 {
     physical->u = sample->u;
     physical->v = sample->v;
@@ -981,28 +1018,29 @@ static void reconstruct(uint8_t pair, const Curr3* sample, Curr3* physical)
 
     switch (pair)
     {
-        case CS_PAIR_UV:
-            physical->w = (int16_t)(-physical->u - physical->v);
-            break;
+    case CS_PAIR_UV:
+        physical->w = (int16_t)(-physical->u - physical->v);
+        break;
 
-        case CS_PAIR_UW:
-            physical->v = (int16_t)(-physical->u - physical->w);
-            break;
+    case CS_PAIR_UW:
+        physical->v = (int16_t)(-physical->u - physical->w);
+        break;
 
-        case CS_PAIR_VW:
-        default:
-            physical->u = (int16_t)(-physical->v - physical->w);
-            break;
+    case CS_PAIR_VW:
+    default:
+        physical->u = (int16_t)(-physical->v - physical->w);
+        break;
     }
 }
 
 /** @brief 写入物理电流缓存，并同步更新 raw 观察值和逻辑相序。 */
-static void apply_phys(const Curr3* physical)
+static void apply_phys(const Curr3 *physical)
 {
     s_phys.u = physical->u;
     s_phys.v = physical->v;
     s_phys.w = physical->w;
-    s_phys.sum = (int16_t)((int32_t)physical->u + (int32_t)physical->v + (int32_t)physical->w);
+    s_phys.sum =
+        (int16_t)((int32_t)physical->u + (int32_t)physical->v + (int32_t)physical->w);
 
     s_raw.u = cnt_to_adc(physical->u, s_zero.u);
     s_raw.v = cnt_to_adc(physical->v, s_zero.v);
@@ -1012,7 +1050,7 @@ static void apply_phys(const Curr3* physical)
 }
 
 /** @brief 按 TuneConfig 中相序/符号把物理相映射为控制逻辑 U/V/W。 */
-static void map_logic(const Curr3* physical)
+static void map_logic(const Curr3 *physical)
 {
 #if (MOT_CURR_PHASE_MAP == MOT_PHASE_MAP_UWV)
     s_logic.u = map_current_sign(physical->u);
@@ -1039,7 +1077,8 @@ static void map_logic(const Curr3* physical)
     s_logic.v = map_current_sign(physical->v);
     s_logic.w = map_current_sign(physical->w);
 #endif
-    s_logic.sum = (int16_t)((int32_t)s_logic.u + (int32_t)s_logic.v + (int32_t)s_logic.w);
+    s_logic.sum =
+        (int16_t)((int32_t)s_logic.u + (int32_t)s_logic.v + (int32_t)s_logic.w);
 }
 
 /** @brief 按 MOT_CURR_SIGN 统一电流方向。 */
@@ -1062,7 +1101,7 @@ static void filter_clear(void)
 }
 
 /** @brief 用有效采样相更新缺失相保持滤波器。 */
-static void filter_update(const Curr3* physical, uint8_t valid_mask)
+static void filter_update(const Curr3 *physical, uint8_t valid_mask)
 {
     if (s_filter.seeded == 0U)
     {
@@ -1134,6 +1173,7 @@ static uint16_t clamp_sample_tick(uint16_t tick)
     return tick;
 }
 
+#if (CS_MULTI_EN != 0U)
 /** @brief 计算两个 int16 的绝对差，饱和到 uint16。 */
 static uint16_t abs_diff_i16(int16_t a, int16_t b)
 {
@@ -1149,6 +1189,7 @@ static uint16_t abs_diff_i16(int16_t a, int16_t b)
     }
     return (uint16_t)diff;
 }
+#endif
 
 /** @brief 将扣零漂后的 count 还原为 12-bit ADC 观察值。 */
 static uint16_t cnt_to_adc(int16_t cnt, uint16_t offset)

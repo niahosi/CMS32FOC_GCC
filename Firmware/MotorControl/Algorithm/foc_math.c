@@ -1,4 +1,5 @@
 #include "foc_math.h"
+#include <stdint.h>
 
 #define FOC_PI_INTEGRAL_LIMIT 32767L
 

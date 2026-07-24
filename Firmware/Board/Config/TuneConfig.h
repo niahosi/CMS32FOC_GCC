@@ -19,11 +19,16 @@
 /** @brief T1 三相均有效窗口默认采样 pair；U/V 的 ADC 顺序时差最短且 pair 稳定。 */
 #define CS_ALL_WINDOW_PAIR CS_PAIR_UV
 
-/** @brief 同一低边窗口双点采样开关。 */
-#define CS_MULTI_EN 1U
-/** @brief 双点采样与主采样点的偏移 tick。 */
+/**
+ * @brief 同一低边窗口的采样次数：0 表示只在动态窗口中心采一次。
+ *
+ * 保留 T1/T2/T3 分区、死区后延迟、尾部余量、两相采样和 KCL 重构；
+ * 仅关闭 CMP1 的第二次触发与 A/B 平均，让每个 PWM 周期形成一个控制样本。
+ */
+#define CS_MULTI_EN 0U
+/** @brief 双点模式备用的 A/B 偏移 tick；CS_MULTI_EN=0 时不参与运行。 */
 #define CS_MULTI_DELTA_TICK 4U
-/** @brief 双点采样两点差值超过该值时，认为本拍落在开关噪声或恢复区。 */
+/** @brief 双点模式备用的 A/B 差值阈值；CS_MULTI_EN=0 时不参与运行。 */
 #define CS_MULTI_SPREAD_LIMIT_CNT 40
 /** @brief 下降计数经过 duty 后，下管刚打开到 ADC 主采样点的延迟。 */
 #define CS_OPEN_SETTLE_TICK (PWM_DEADTIME_TICKS + 4U) //(PWM_DEADTIME_TICKS + 80U)
@@ -31,7 +36,7 @@
 #define CS_TAIL_MARGIN_TICK 60U
 /** @brief Case3 无效相使用的软件低通滤波右移。 */
 #define CS_FILTER_SHIFT 3U
-/** @brief 高 VF 电压时切换为窗口中心单点采样，减少最短低边窗口所需余量。 */
+/** @brief 双点模式下高 VF 电压切换为中心单点；CS_MULTI_EN=0 时恒为单点。 */
 #define CS_HIGH_VF_SINGLE_EN 1U
 /** @brief 高 VF 单点采样阈值，单位为 VF 电压命令 count。 */
 #define CS_HIGH_VF_SINGLE_VOLTAGE 660
@@ -58,10 +63,11 @@
 /**
  * @brief 单次控制周期允许的最大 MA600 raw 跳变；超过认为是 SPI/角度坏样本。
  *
- * 首帧角度会无条件接受；进入运行后该门限用于拒绝 SPI/角度毛刺。
- * 20 kHz 快环下，正常 800 rpm 每拍 raw 增量只有几十 count，1024 仍有很大裕量。
+ * 首帧角度会无条件接受；进入运行后该门限作为 20 kHz 位置累计的最小 raw
+ * 步进门限，用于拒绝 SPI/角度毛刺。5000 rpm 时每拍约 1092 count，
+ * 2048 仍有裕量，同时能挡掉明显不可能的单拍跳变。
  */
-#define MOT_ENCODER_MAX_STEP_RAW 1024U
+#define MOT_ENCODER_MAX_STEP_RAW 2048U
 /** @brief MA600 侧轴 BCT 补偿是否启用；只写 RAM 寄存器，不存 NVM。 */
 #define MOT_ENCODER_SIDE_BCT_EN 1U
 /** @brief MA600 侧轴 BCT 强度，按手册 BCT = 258 * (1 - 1 / k)。 */
@@ -156,17 +162,54 @@
 #define CTRL_SPD_FILTER_SHIFT 2u
 /** @brief 速度给定小于该 rpm 时认为是停机命令，防止零速抖动。 */
 #define CTRL_SPD_CMD_DEADBAND_RPM 5
-/** @brief 速度目标斜坡，单位 rpm/s；低惯量空心杯电机先用温和斜坡。 */
-#define CTRL_SPD_REF_RAMP_RPM_PER_S 2000L
+/**
+ * @brief 速度目标斜坡，单位 rpm/s。
+ *
+ * 5000 rpm 仅需 50 ms 即可到达给定。位置模式的减速不依赖此处的对称斜坡，
+ * 而由 CTRL_POS_BRAKE_ACCEL_RPM_PER_S 的距离制动包络提前限制。
+ */
+#define CTRL_SPD_REF_RAMP_RPM_PER_S 100000L
 /** @brief 速度给定限幅，机械 rpm；Ozone speed_ref_rpm 会先换算再按该值限幅。 */
-#define CTRL_SPD_REF_LIMIT_RPM 5000L
+#define CTRL_SPD_REF_LIMIT_RPM 5600L
 /** @brief 速度给定限幅，编码器电角 count/s。 */
-#define CTRL_SPD_REF_LIMIT                                                                         \
-    ((CTRL_SPD_REF_LIMIT_RPM * (long)MOT_SENSOR_CPR * (long)MOT_SENSOR_POLE_PAIRS) / 60L)
+#define CTRL_SPD_REF_LIMIT                                                             \
+    ((CTRL_SPD_REF_LIMIT_RPM * (long)MOT_SENSOR_CPR * (long)MOT_POLE_PAIRS) / 60L)
 /** @brief 速度环默认 iq 限幅；80 count 约 0.44 A，4 ohm 电机上压降约 1.76 V。 */
 #define CTRL_SPD_IQ_LIMIT 80
 /** @brief 速度环输出 iq 命令每个 1 kHz 速度周期允许变化的最大 count。 */
 #define CTRL_SPD_IQ_SLEW_STEP 4
+
+/* Position loop ----------------------------------------------------------- */
+
+/** @brief 位置环比例系数；输入为 encoder count 误差，输出为 mechanical rpm。 */
+#define CTRL_POS_KP 3
+/** @brief 位置环误差缩放右移位数；默认 3/256 rpm/count，0.50 mm 误差会打满 3000 rpm。
+ */
+#define CTRL_POS_ERR_SHIFT 8u
+/**
+ * @brief 位置模式默认速度限幅，mechanical rpm。
+ *
+ * 0.50 mm/rev 丝杠下 5000 rpm 约为 41.7 mm/s。速度环总上限保留在 5600 rpm，
+ * 位置环接近目标时由制动规划提前降低速度，避免以机械端点制动。
+ */
+#define CTRL_POS_SPEED_LIMIT_RPM 5000
+/**
+ * @brief 位置模式默认 q 轴电流限幅。
+ *
+ * 120 count 约 0.66 A。位置大阶跃需要同时使用正向加速和负向制动转矩，
+ * 因此独立于普通速度模式的 CTRL_SPD_IQ_LIMIT = 80。
+ */
+#define CTRL_POS_IQ_LIMIT 120
+/**
+ * @brief 位置环制动规划加速度，单位 mechanical rpm/s。
+ *
+ * 位置环根据剩余 encoder count 计算可在此加速度内刹停的最大速度，避免纯 P 输出
+ * 长时间顶住速度限幅后才开始减速。该值必须小于 CTRL_SPD_REF_RAMP_RPM_PER_S，
+ * 为速度反馈滤波、速度 PI 和实际负载变化留出制动余量。
+ */
+#define CTRL_POS_BRAKE_ACCEL_RPM_PER_S 35000L
+/** @brief 位置误差小于该 count 时认为到位，并给速度环 0 rpm。 */
+#define CTRL_POS_DEADBAND_COUNTS 128L
 
 /* Open loop VF/IF --------------------------------------------------------- */
 

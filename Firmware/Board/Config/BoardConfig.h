@@ -1,3 +1,11 @@
+/*
+ * @FilePath: /CMS32FOC_GCC/Firmware/Board/Config/BoardConfig.h
+ * @Author: setsuna
+ * @Date: 2026-07-20 19:52:55
+ * @LastEditors: setsuna
+ * @LastEditTime: 2026-07-21 17:23:09
+ * @Description:
+ */
 /**
  * @file BoardConfig.h
  * @brief 板级和电机硬件基线配置。
@@ -18,7 +26,8 @@
 #define PWM_DUTY_MIN 32U
 /** @brief 高调制测试阶段最大占空比限制。 */
 #define PWM_DUTY_MAX 1568U
-/** @brief 当前对称 duty guard 下 SVPWM 线性电压幅值上限，约等于 (800 - guard) / 0.866。 */
+/** @brief 当前对称 duty guard 下 SVPWM 线性电压幅值上限，约等于 (800 - guard) / 0.866。
+ */
 #define PWM_SVPWM_V_LIMIT (((PWM_DUTY_50 - PWM_DUTY_MIN) * 1000U) / 866U)
 /** @brief EPWM CMP0 触发 ADC 的默认计数点。 */
 #define PWM_ADC_TRIGGER_TICK_DEFAULT 650U
@@ -59,12 +68,15 @@
 /* Motor and sensor -------------------------------------------------------- */
 
 #define MOT_POLE_PAIRS 4u
-#define MOT_SENSOR_POLE_PAIRS 4u
+/** @brief MA600 每个电角周期的 raw count。当前磁环极对和电机极对一致，raw
+ * 已是电角标尺。 */
 #define MOT_SENSOR_CPR 65536ul
-#define MOT_POS_COUNTS_PER_REV (MOT_SENSOR_CPR * MOT_SENSOR_POLE_PAIRS)
+#define MOT_POS_COUNTS_PER_REV (MOT_SENSOR_CPR * MOT_POLE_PAIRS)
+/** @brief 丝杠导程，单位 mm_x100/rev；0.50 mm/rev 写 50。 */
+#define MOT_SCREW_LEAD_MM_X100 50L
+/** @brief 丝杠标称行程，单位 mm_x100；10.00 mm 写 1000。 */
+#define MOT_SCREW_NOMINAL_TRAVEL_MM_X100 1000L
 
-/** @brief MA600 磁环角到电机电角度的倍数：转子极对数 / 磁环极对数。 */
-#define MOT_SENSOR_ELEC (MOT_POLE_PAIRS / MOT_SENSOR_POLE_PAIRS)
 /** @brief 传感器方向，使编码器电角度与控制电角度正方向一致。 */
 // #define MOT_SENSOR_DIR (1)
 #define MOT_SENSOR_DIR (1)
@@ -81,7 +93,7 @@
 /* Board UART --------------------------------------------------------------- */
 
 /** @brief 开发期 UART bring-up 开关；打开后会在延时窗口后复用 P06/P07。 */
-#define BOARD_UART_ENABLE 1U
+#define BOARD_UART_ENABLE 0U
 /** @brief 开发期 UART 波特率；先用 9600 验证链路稳定性，再逐步提高。 */
 #define BOARD_UART_BAUD 2000000U // 921600U
 /** @brief 上电后保留 SWD 连接窗口，再禁用 SWD 并把 P06/P07 切成 UART。 */
@@ -94,3 +106,12 @@
 #define BOARD_UART_IRQ_PRIORITY 0U
 /** @brief UART 调试期暂时降低 ADC 快环优先级，避免单字节 RX buffer 溢出。 */
 #define BOARD_UART_ADC_IRQ_PRIORITY 1U
+
+/* Profiling --------------------------------------------------------------- */
+
+/** @brief 使用 TMR1 做内部执行时间观测；只读计数器，不启用 TIMER IRQ。 */
+#define BOARD_PROFILE_ENABLE 1U
+/** @brief Profiling 使用的 Timer 名义优先级；当前不启用 IRQ，仅作防误开预留。 */
+#define BOARD_PROFILE_TIMER_IRQ_PRIORITY 2U
+/** @brief Profiling Timer 采用 APB/16，64 MHz 下 1 tick = 0.25 us。 */
+#define BOARD_PROFILE_TIMER_DIVIDER 16UL

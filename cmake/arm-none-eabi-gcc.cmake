@@ -1,10 +1,16 @@
+#Generic 对应要编译的是裸机系统
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
-set(CMAKE_C_COMPILER arm-none-eabi-gcc)
-set(CMAKE_CXX_COMPILER arm-none-eabi-g++)
-set(CMAKE_ASM_COMPILER arm-none-eabi-gcc)
-set(CMAKE_OBJCOPY arm-none-eabi-objcopy)
-set(CMAKE_SIZE arm-none-eabi-size)
+#arm-none-eabi 是ARM官方提供的标准裸机编译器前缀
+set(CMS32_TOOLCHAIN_PREFIX arm-none-eabi)
 
+set(CMAKE_C_COMPILER ${CMS32_TOOLCHAIN_PREFIX}-gcc)
+set(CMAKE_CXX_COMPILER ${CMS32_TOOLCHAIN_PREFIX}-g++)
+set(CMAKE_ASM_COMPILER ${CMS32_TOOLCHAIN_PREFIX}-gcc)
+set(CMAKE_OBJCOPY ${CMS32_TOOLCHAIN_PREFIX}-objcopy)
+set(CMAKE_SIZE ${CMS32_TOOLCHAIN_PREFIX}-size)
+
+#在做编译器健康检查时，只需要编译出静态库不报错就行，
+#防止出现链接脚本导致自检失败
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)

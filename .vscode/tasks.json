@@ -94,7 +94,7 @@
     {
       "label": "Flash Rescue",
       "type": "shell",
-      "command": "target='${input:firmwareTarget}'; hex=\"\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\jove\\\\workspace\\\\01-Projects\\\\Embedded\\\\CMS32FOC_GCC\\\\build\\\\gcc-debug\\\\${target}.hex\"; printf 'device CMS32M6510\\nif SWD\\nspeed 1000\\nconnect\\nhalt\\nloadfile %s\\nqc\\n' \"$hex\" | '/mnt/c/Program Files/SEGGER/JLink_V952/JLink.exe'",
+      "command": "target='${input:firmwareTarget}'; hex=\"\\\\\\\\wsl.localhost\\\\Ubuntu\\\\home\\\\jove\\\\workspace\\\\01-Projects\\\\Embedded\\\\CMS32FOC_GCC\\\\build\\\\gcc-debug\\\\${target}.hex\"; printf 'device CMS32M6510\\nif SWD\\nspeed 10000\\nconnect\\nhalt\\nloadfile %s\\nqc\\n' \"$hex\" | '/mnt/c/Program Files/SEGGER/JLink_V952/JLink.exe'",
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {

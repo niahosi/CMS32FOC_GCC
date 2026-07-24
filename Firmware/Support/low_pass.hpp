@@ -14,27 +14,26 @@ public:
     {
         if constexpr (Shift == 0U)
         {
-            value_ = sample;
+            value = sample;
         }
         else
         {
-            value_ += (sample - value_) >> Shift;
+            value += (sample - value) >> Shift;
         }
-        return value_;
+        return value;
     }
 
-    constexpr void reset(int32_t value = 0) noexcept
+    constexpr void reset(int32_t next_value = 0) noexcept
     {
-        value_ = value;
+        value = next_value;
     }
 
-    constexpr int32_t value() const noexcept
+    constexpr int32_t get() const noexcept
     {
-        return value_;
+        return value;
     }
 
-private:
-    int32_t value_{0};
+    int32_t value{0};
 };
 
 } // namespace cms32::support
